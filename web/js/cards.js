@@ -1,7 +1,7 @@
 // Latest-value cards and the table of recent readings.
 
 import { METRICS } from "./charts.js";
-import { convertTemp, formatNumber, formatTime, tempUnit } from "./units.js";
+import { convertTemp, formatClock, formatNumber, formatTime, tempUnit } from "./units.js";
 
 const ROWS = 10;
 const display = (metric, value) =>
@@ -34,6 +34,17 @@ function trend(slope, steady, strong) {
 const extreme = (pick, today, reading) =>
   today === null || today === undefined || reading.quality !== "good" ? today : pick(today, reading.temp_c);
 
+const SKY = {
+  clear: "☀ Clear", partly_cloudy: "⛅ Partly cloudy", mostly_cloudy: "🌥 Mostly cloudy", overcast: "☁ Overcast",
+  very_bright: "☀ Very bright (sensor maxed)", night: "🌙 Night", dawn: "🌅 Dawn", dusk: "🌇 Dusk",
+};
+const SKY_NOTE = "An estimate: shade, sensor direction, dirt and window glass all affect it.";
+
+function skyLine(c) {
+  if (c.sky) return [`${SKY[c.sky]}${c.sky === "night" ? "" : " ⓘ"}`, SKY_NOTE];
+  return ["Sky: –", c.flags?.calibrating_light ? "Available once the light sensor is calibrated" : "Not enough recent data"];
+}
+
 /** Text lines under a card's main value. */
 const DETAILS = {
   temp_c: (r, c) => [
@@ -45,7 +56,13 @@ const DETAILS = {
     [`Dew point ${temp(r.dew_point_c)}`, "Temperature at which the air becomes saturated"],
     [`Absolute ${formatNumber(r.abs_humidity_gm3, 1)} g/m³ · VPD ${formatNumber(r.vpd_kpa, 2)} kPa`,
       "VPD (vapour pressure deficit): how strongly the air dries things"],
-    [`Window condensation: ${c.recommendations?.window_condensation_risk ?? "–"}`, "Estimate based on your indoor settings"],
+    [`Window condensation ⓘ: ${c.recommendations?.window_condensation_risk ?? "–"}`, "Estimate based on your indoor settings"],
+  ],
+  light_raw: (r, c, timeZone) => [
+    skyLine(c),
+    [`Sunrise ${formatClock(c.sun?.sunrise_ms, timeZone)} · Sunset ${formatClock(c.sun?.sunset_ms, timeZone)}`, "Calculated for the station's location"],
+    ...(c.flags?.calibrating_light
+      ? [["◌ Calibrating light", "Needs about a day of data including daylight and night", "chip"]] : []),
   ],
 };
 
@@ -98,9 +115,9 @@ export class Cards {
       arrow.textContent = symbol;
       arrow.title = word && `${word} over the last 30 min`;
       arrow.setAttribute("aria-label", word);
-      const lines = this.latest && DETAILS[metric.key]?.(this.latest, this.conditions);
-      details.replaceChildren(...(lines || []).map(([text, title]) => {
-        const node = element("div", "", text);
+      const lines = this.latest && DETAILS[metric.key]?.(this.latest, this.conditions, this.timeZone);
+      details.replaceChildren(...(lines || []).map(([text, title, className]) => {
+        const node = element("div", className, text);
         node.title = title;
         return node;
       }));

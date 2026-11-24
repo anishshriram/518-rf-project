@@ -29,6 +29,12 @@ class Broadcaster:
         if readings and self._loop is not None:
             self._loop.call_soon_threadsafe(self._put_all, readings)
 
+    def publish_event(self, event: str, data: dict) -> None:
+        """Send one event without an id. Safe to call from any thread."""
+        if self._loop is not None:
+            message = {"event": event, "data": data}
+            self._loop.call_soon_threadsafe(self._put_all, [message])
+
     def subscribe(self) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(QUEUE_MAX)
         self._clients.add(queue)
@@ -37,12 +43,12 @@ class Broadcaster:
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._clients.discard(queue)
 
-    def _put_all(self, readings: list[dict]) -> None:
+    def _put_all(self, messages: list[dict]) -> None:
         for queue in self._clients:
-            for reading in readings:
+            for message in messages:
                 if queue.full():
                     queue.get_nowait()
-                queue.put_nowait(reading)
+                queue.put_nowait(message)
 
     async def events(
         self, last_id: int | None, missed_since: Callable[[int], list[dict]]
@@ -63,7 +69,9 @@ class Broadcaster:
                 except TimeoutError:
                     yield format_event("heartbeat", {})
                     continue
-                if reading["id"] > replayed:
+                if "event" in reading:
+                    yield format_event(reading["event"], reading["data"])
+                elif reading["id"] > replayed:
                     yield format_event("reading", reading, reading["id"])
         finally:
             self.unsubscribe(queue)

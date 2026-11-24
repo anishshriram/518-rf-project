@@ -16,6 +16,7 @@ from astral.sun import elevation, sunrise
 
 from server.config import Config, ConfigError, load_config
 from server.derive import rh_from_dew_point
+from server.sun import clear_sky
 
 BANNER = [
     "parameters are ac:3",
@@ -57,14 +58,6 @@ SCENARIOS = {
     "covered": Scenario(mean_c=0.5, amplitude_c=0.3, dew_point_c=-2, drift=False),
     "rssi_shift": Scenario(),
 }
-
-
-def clear_sky(elevation_deg: float) -> float:
-    """Haurwitz clear-sky irradiance in W/m2 (spec section 16.2)."""
-    if elevation_deg <= 0:
-        return 0.0
-    cos_z = math.sin(math.radians(elevation_deg))
-    return 1098 * cos_z * math.exp(-0.059 / cos_z)
 
 
 def ramp(x: float, start: float, length: float) -> float:

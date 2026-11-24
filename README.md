@@ -1,7 +1,7 @@
 # PIP Tag Outdoor Weather Station
 
 Outdoor weather station and real-time dashboard built on a PIP RF sensor tag
-and USB receiver. So far (milestone M3) packets are simulated or received,
+and USB receiver. So far (milestone M4) packets are simulated or received,
 collected, sent to the server, stored in SQLite and shown on a live dashboard.
 
 ## Setup

@@ -100,3 +100,29 @@ Choices made where the spec was ambiguous or the environment differed from it.
 - **`server.rebuild`** parses raw lines again and replaces readings. It keeps
   clock-skew verdicts, because the delivery delay is not stored.
 - **Degree-day totals** per month and season come with the daily summaries (M6).
+
+## M4
+
+- **Calibration per source:** keys are stored as `simulator.light_k` and so on, so
+  simulated light never calibrates the real sensor.
+- **Normalised light is computed when read,** not stored, so all history uses one
+  scale. The `readings.light_norm` column stays empty. `sun_elev_deg` and
+  `is_daylight` are stored.
+- **"Enough data" to calibrate:** readings spanning 24 h, with at least 120 minutes
+  of sun above 15 degrees and 60 minutes of night. A scale hardly above the night
+  noise (a covered sensor) is refused. In places where the winter sun stays
+  below 15 degrees, light stays uncalibrated.
+- **Recalibration** runs when the data has advanced an hour, so simulated time
+  works too. Saturated samples are left out of the scale.
+- **Until calibrated** the light chart shows raw values, since a scale that keeps
+  changing would distort the curve. The API still gives the spec's fallback.
+- **Sky rules, uncovered case:** clearness of 0.75 or more with spread from 0.08 to
+  0.12 counts as partly cloudy. At least 8 of the 15 minutes need data.
+- **Saturated sensor:** shown as "very bright", because clearness is then only a
+  lower bound.
+- **Minimum night sigma** is 1 raw unit, since a sensor that reads 0 all night has
+  no spread.
+- **Night shading** uses a small plugin of our own instead of
+  chartjs-plugin-annotation.
+- **Deferred to M6:** detected sunrise and sunset, and daylight and sunshine hours.
+  Laundry and open-window advice wait for the M5 alerts.

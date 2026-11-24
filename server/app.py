@@ -3,7 +3,9 @@
 Run with `python -m server.app`.
 """
 
+import asyncio
 import hmac
+import logging
 import sys
 import threading
 import time
@@ -16,13 +18,15 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import aggregates, db, derive, history
+from server import aggregates, calibration, db, derive, history, sun
+from server.calibration import Calibrator
 from server.config import Config, ConfigError, load_config
 from server.ingest import IngestRequest, ingest
 from server.stream import Broadcaster
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 REPLAY_MAX = 2000
+logger = logging.getLogger("uvicorn.error")
 DEFAULT_SPAN_MS = 15 * history.MINUTE
 CURRENT_VALUES = (
     "temp_c",
@@ -47,17 +51,60 @@ def now_ms() -> int:
 def create_app(config: Config) -> FastAPI:
     db_lock = threading.Lock()
     broadcaster = Broadcaster()
+    calibrator = Calibrator()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.db = db.connect(config.server.db_path)
         broadcaster.start()
+        task = asyncio.create_task(calibration_loop())
         yield
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
         with db_lock:
             app.state.db.close()
 
     app = FastAPI(title="PIP Weather Station", version="0.1.0", lifespan=lifespan)
     app.state.broadcaster = broadcaster
+
+    def calibrate_if_due() -> None:
+        """Recalibrate once the newest data is an hour past the last time."""
+        with reader() as conn:
+            latest = db.latest_reading(conn)
+            if latest is None:
+                return
+            source, ts_ms = latest["source"], latest["ts_ms"]
+            before = calibrator.get(conn, source)
+            if not calibrator.is_due(before, ts_ms):
+                return
+            # Reading takes longest, so it happens outside the write lock.
+            result = calibration.calibrate(conn, config, source, ts_ms)
+        with db_lock:
+            calibration.save(app.state.db, source, result)
+        calibrator.put(source, result)
+        if result.light_k != before.light_k:
+            broadcaster.publish_event("calibration", {"calibrated": result.calibrated})
+
+    async def calibration_loop() -> None:
+        while True:
+            started = time.monotonic()
+            try:
+                await asyncio.to_thread(calibrate_if_due)
+            except Exception:
+                logger.exception("Light calibration failed")
+            # Stay light on the CPU when simulated hours pass quickly.
+            await asyncio.sleep(max(5.0, 10 * (time.monotonic() - started)))
+
+    def add_light(conn, reading: dict) -> dict:
+        """Fill in the values that depend on the light calibration."""
+        current_calibration = calibrator.get(conn, reading["source"])
+        calibrator.observe(current_calibration, reading["light_raw"])
+        elevation = sun.elevation(config.station, reading["ts_ms"])
+        return {
+            **reading,
+            "light_norm": current_calibration.light_norm(reading["light_raw"]),
+            "clear_sky_norm": current_calibration.clear_sky_norm(elevation),
+        }
 
     def reader():
         return closing(db.open_reader(config.server.db_path))
@@ -78,13 +125,15 @@ def create_app(config: Config) -> FastAPI:
         with db_lock:
             counts, readings = ingest(app.state.db, config, request)
             # Inside the lock, so clients see readings in id order.
-            broadcaster.publish_readings(readings)
+            broadcaster.publish_readings(
+                [add_light(app.state.db, reading) for reading in readings]
+            )
         return counts
 
     @app.get("/api/current", summary="Latest reading and tag status")
     def get_current() -> dict:
         with reader() as conn:
-            return current(conn, config, now_ms())
+            return current(conn, config, calibrator, now_ms())
 
     @app.get("/api/history", summary="Time series for the charts")
     def get_history(
@@ -109,14 +158,16 @@ def create_app(config: Config) -> FastAPI:
                 raise HTTPException(422, "'from' must not be after 'to'")
             if resolution == "raw" and end - start > history.MAX_RAW_SPAN:
                 raise HTTPException(422, "raw resolution is limited to 6 hours")
+            source = latest["source"] if latest else "hardware"
             return history.query(
                 conn,
-                source=latest["source"] if latest else "hardware",
+                source=source,
                 start=start,
                 end=end,
                 metrics=names,
                 resolution=resolution,
-                beacon_s=config.tag.expected_beacon_interval_s,
+                config=config,
+                calibration=calibrator.get(conn, source),
             )
 
     @app.get(
@@ -133,7 +184,8 @@ def create_app(config: Config) -> FastAPI:
 
         def missed_since(reading_id: int) -> list[dict]:
             with reader() as conn:
-                return db.readings_after(conn, reading_id, REPLAY_MAX)
+                missed = db.readings_after(conn, reading_id, REPLAY_MAX)
+                return [add_light(conn, reading) for reading in missed]
 
         return StreamingResponse(
             broadcaster.events(last_id, missed_since),
@@ -145,7 +197,7 @@ def create_app(config: Config) -> FastAPI:
     return app
 
 
-def current(conn, config: Config, now: int) -> dict:
+def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
     """Build the GET /api/current response."""
     latest = db.latest_reading(conn)
     tag = config.tag
@@ -160,6 +212,7 @@ def current(conn, config: Config, now: int) -> dict:
             status = "offline_critical"
         elif age_s >= tag.offline_warning_s:
             status = "offline_warning"
+    light = calibrator.get(conn, latest["source"]) if latest else None
     value: Callable = (latest or {}).get
     return {
         "station": {"name": config.station.name, "timezone": config.station.timezone},
@@ -176,10 +229,25 @@ def current(conn, config: Config, now: int) -> dict:
         "bad_crc_1h": db.bad_crc_since(conn, now - history.HOUR),
         **{name: value(name) for name in CURRENT_VALUES},
         **(
-            aggregates.conditions(conn, config, latest["source"], latest["ts_ms"])
+            aggregates.conditions(
+                conn, config, latest["source"], latest["ts_ms"], light
+            )
             if latest
-            else {"trends": {}, "trends_60m": {}, "today": {}}
+            else {
+                "sky": None,
+                "clearness": None,
+                "trends": {},
+                "trends_60m": {},
+                "today": {},
+            }
         ),
+        "light_norm": light.light_norm(latest["light_raw"]) if latest else None,
+        "sun": sun_info(config, latest["ts_ms"] if latest else now),
+        "flags": {
+            "calibrating_light": light is None or not light.calibrated,
+            "light_saturated": latest is not None
+            and light.is_saturated(latest["light_raw"]),
+        },
         "recommendations": {
             "window_condensation_risk": derive.condensation_risk(
                 config.home.indoor_setpoint_c,
@@ -190,6 +258,17 @@ def current(conn, config: Config, now: int) -> dict:
             if latest
             else None,
         },
+    }
+
+
+def sun_info(config: Config, ts_ms: int) -> dict:
+    sunrise, sunset = sun.sun_times(config.station, sun.local_date(config.station, ts_ms))
+    elevation = sun.elevation(config.station, ts_ms)
+    return {
+        "elevation_deg": elevation,
+        "sunrise_ms": sunrise,
+        "sunset_ms": sunset,
+        "is_daylight": elevation > 0,
     }
 
 

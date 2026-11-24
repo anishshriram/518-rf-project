@@ -45,3 +45,6 @@ export function formatTick(ms, timeZone, spanMs) {
 
 export const formatTime = (ms, timeZone) =>
   formatter(timeZone, { ...DATE, ...CLOCK, second: "2-digit", timeZoneName: "short" }).format(ms);
+
+export const formatClock = (ms, timeZone) =>
+  ms === null || ms === undefined ? "–" : formatter(timeZone, CLOCK).format(ms);

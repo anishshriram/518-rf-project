@@ -20,6 +20,7 @@ let clockOffset = 0;    // server clock minus browser clock
 let lastSeen = null;    // server-clock time of the newest packet
 let lastTs = null;      // newest reading timestamp
 let lastId = 0;
+let shadedUntil = Infinity; // night shading is known up to here
 let loads = 0;
 let loading = false;
 let reloadTimer = null;
@@ -66,6 +67,7 @@ async function load() {
     if (token !== loads) return;
     charts.load(history, span);
     lastId = history.last_id;
+    shadedUntil = lastTs === null ? Infinity : windowEnd() + DAY;
     if (modeChanged) cards.clear();
     if (now.last_reading_ms !== null) cards.show({ ...now, ts_ms: now.last_reading_ms });
     else cards.clear();
@@ -108,6 +110,7 @@ function onReading(reading) {
     cards.show(reading);
   }
   charts.draw(windowEnd());
+  if (windowEnd() > shadedUntil) load();
 }
 
 function renderState() {
@@ -144,6 +147,7 @@ function connect() {
     load(); // also fills in whatever was missed while disconnected
   });
   source.addEventListener("reading", (event) => onReading(JSON.parse(event.data)));
+  source.addEventListener("calibration", () => load()); // the light scale changed
   source.addEventListener("error", () => {
     connected = false;
     renderState();

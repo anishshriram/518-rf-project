@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from server import db, derive
+from server import db, derive, sun
 from server.config import Config, ValidationConfig
 
 CLOCK_SKEW_MS = 10 * 60 * 1000
@@ -144,8 +144,16 @@ def store_reading(
         "abs_humidity_gm3": derived.get("abs_humidity_gm3"),
         "quality": quality,
     }
+    elevation = sun.elevation(config.station, packet.ts_ms)
     reading_id = db.insert_reading(
-        conn, {**reading, "raw_id": raw_id, "reject_reason": reason}
+        conn,
+        {
+            **reading,
+            "raw_id": raw_id,
+            "reject_reason": reason,
+            "sun_elev_deg": elevation,
+            "is_daylight": elevation > 0,
+        },
     )
     published = {
         **reading,

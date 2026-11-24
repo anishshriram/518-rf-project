@@ -5,6 +5,7 @@
   --text: #0b0b0b;
   --text-2: #52514e;
   --grid: #e4e3df;
+  --night: rgb(20 30 70 / 9%);
   --temp: #eb6834;
   --rh: #2a78d6;
   --light: #1baf7a;
@@ -21,6 +22,7 @@
     --text: #f0efec;
     --text-2: #c3c2b7;
     --grid: #33332f;
+  --night: rgb(130 150 255 / 10%);
     --temp: #d95926;
     --rh: #3987e5;
     --light: #199e70;
@@ -65,6 +67,7 @@ button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
 .card .label { color: var(--text-2); font-size: 0.9rem; }
 .card .trend { font-size: 1.4rem; margin-left: 4px; }
 .card .details { color: var(--text-2); font-size: 0.88rem; }
+.card .chip { display: inline-block; padding: 0 8px; border-radius: 4px; background: var(--info-bg); color: var(--text); }
 .stale .value { color: var(--text-2); }
 .windows { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 12px; }
 .charts { display: grid; gap: 12px; }

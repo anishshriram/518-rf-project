@@ -13,14 +13,37 @@ export const METRICS = [
     ],
   },
   { key: "rh_pct", title: "Humidity", color: "--rh", digits: 0, minSpan: 10, unit: () => "%" },
-  { key: "light_raw", title: "Light", color: "--light", digits: 0, minSpan: 20, unit: () => "raw", zero: true },
+  {
+    key: "light_raw", title: "Light", color: "--light", digits: 0, minSpan: 20, unit: () => "raw", zero: true,
+    // Used by the chart once the light sensor is calibrated.
+    calibrated: {
+      key: "light_norm", unit: () => "% of full sun", convert: (v) => (v === null ? null : v * 100),
+    },
+    extra: [{ key: "clear_sky_norm", title: "Clear sky", color: "--text-2", dash: [6, 4] }],
+  },
   { key: "rssi_dbm", title: "Signal strength", color: "--rssi", digits: 1, minSpan: 10, unit: () => "dBm" },
 ];
 
 const seriesOf = (metric) => [metric, ...(metric.extra ?? [])];
-export const HISTORY_KEYS = METRICS.flatMap((metric) => seriesOf(metric).map((s) => s.key));
+export const HISTORY_KEYS = [...METRICS.flatMap((metric) => seriesOf(metric).map((s) => s.key)), "light_norm"];
 
 const cssColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+/** Shades the hours between sunset and sunrise. */
+const nightShading = (set) => ({
+  id: "nightShading",
+  beforeDatasetsDraw(chart) {
+    const { ctx, chartArea, scales: { x } } = chart;
+    ctx.save();
+    ctx.fillStyle = cssColor("--night");
+    for (const [from, to] of set.nights) {
+      const left = Math.max(chartArea.left, x.getPixelForValue(from));
+      const right = Math.min(chartArea.right, x.getPixelForValue(to));
+      if (right > left) ctx.fillRect(left, chartArea.top, right - left, chartArea.bottom - chartArea.top);
+    }
+    ctx.restore();
+  },
+});
 
 const crosshair = {
   id: "crosshair",
@@ -47,6 +70,8 @@ const crosshair = {
 export class ChartSet {
   constructor(container) {
     this.timeZone = "UTC";
+    this.nights = [];
+    this.calibrated = false;
     this.spanMs = 0;
     this.step = 0; // bucket size, 0 for raw points
     this.gapMs = Infinity;
@@ -55,6 +80,11 @@ export class ChartSet {
     this.redraw = null;
     this.charts = METRICS.map((metric) => this.#create(container, metric));
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => this.#recolor());
+  }
+
+  /** How a metric is charted at the moment. */
+  #view(metric) {
+    return this.calibrated ? { ...metric, ...metric.calibrated } : metric;
   }
 
   #create(container, metric) {
@@ -79,7 +109,7 @@ export class ChartSet {
     };
     const chart = new Chart(canvas, {
       type: "line",
-      plugins: [crosshair],
+      plugins: [nightShading(this), crosshair],
       data: {
         datasets: seriesOf(metric).map((series) => ({
           label: series.title,
@@ -123,7 +153,7 @@ export class ChartSet {
             callbacks: {
               title: (items) => (items.length ? formatTime(items[0].raw.x, this.timeZone) : ""),
               label: (item) => {
-                const text = `${item.dataset.label}: ${formatNumber(item.raw.y, metric.digits)} ${metric.unit()}`;
+                const text = `${item.dataset.label}: ${formatNumber(item.raw.y, metric.digits)} ${this.#view(metric).unit()}`;
                 return item.raw.suspect ? `${text} (suspect)` : text;
               },
             },
@@ -165,7 +195,7 @@ export class ChartSet {
   }
 
   #title({ metric, heading }) {
-    heading.textContent = `${metric.title} (${metric.unit()})`;
+    heading.textContent = `${metric.title} (${this.#view(metric).unit()})`;
   }
 
   #style({ metric, chart }) {
@@ -193,7 +223,12 @@ export class ChartSet {
     this.spanMs = spanMs;
     this.step = history.resolution_ms;
     this.gapMs = history.gap_threshold_ms;
-    for (const { metric, chart } of this.charts) {
+    this.nights = history.night_intervals;
+    this.calibrated = history.calibrated;
+    for (const entry of this.charts) {
+      const { chart } = entry;
+      const metric = this.#view(entry.metric);
+      this.#title(entry);
       seriesOf(metric).forEach((series, index) => {
         const { t, avg } = history.series[series.key];
         const points = [];
@@ -227,7 +262,8 @@ export class ChartSet {
     const sameBucket = this.step > 0 && time === this.lastTime;
     this.bucketCount = sameBucket ? this.bucketCount + 1 : 1;
     const gap = this.lastTime !== null && time - this.lastTime > this.gapMs;
-    for (const { metric, chart } of this.charts) {
+    for (const { metric: base, chart } of this.charts) {
+      const metric = this.#view(base);
       seriesOf(metric).forEach((series, index) => {
         const { data } = chart.data.datasets[index];
         const value = reading[series.key] ?? null;
@@ -270,8 +306,9 @@ export class ChartSet {
   /** Re-express existing points after a unit change. */
   changeUnit() {
     for (const entry of this.charts) {
+      const { convert } = this.#view(entry.metric);
       for (const set of entry.chart.data.datasets) {
-        set.data = set.data.map((p) => ({ ...p, y: entry.metric.convert ? entry.metric.convert(p.base) : p.base }));
+        set.data = set.data.map((p) => ({ ...p, y: convert ? convert(p.base) : p.base }));
       }
       this.#title(entry);
     }

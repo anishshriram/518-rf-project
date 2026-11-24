@@ -3,16 +3,22 @@
 import sqlite3
 from statistics import median
 
+from server import sun
+from server.calibration import Calibration
+from server.config import Config
+
 # Columns of `readings` that can be charted.
-METRICS = (
+COLUMNS = (
     "temp_c",
     "rh_pct",
     "dew_point_c",
     "heat_index_c",
-    "light_norm",
     "light_raw",
     "rssi_dbm",
 )
+# Computed from raw light, so that all history uses the current calibration.
+LIGHT_METRICS = ("light_norm", "clear_sky_norm", "clearness")
+METRICS = COLUMNS + LIGHT_METRICS
 MINUTE, HOUR, DAY = 60_000, 3_600_000, 86_400_000
 RESOLUTIONS = {
     "raw": 0,
@@ -24,6 +30,7 @@ RESOLUTIONS = {
     "1d": DAY,
 }
 MAX_RAW_SPAN = 6 * HOUR
+NIGHT_AHEAD = 2 * DAY
 
 
 def auto_resolution(span_ms: int) -> str:
@@ -48,25 +55,30 @@ def query(
     end: int,
     metrics: list[str],
     resolution: str,
-    beacon_s: float,
+    config: Config,
+    calibration: Calibration,
 ) -> dict:
     """Return series of one source only; `metrics` must come from METRICS."""
     if resolution == "auto":
         resolution = auto_resolution(end - start)
     step = RESOLUTIONS[resolution]
-    if step:
-        rows = _bucketed(conn, source, start, end, metrics, step)
-    else:
-        rows = _raw(conn, source, start, end, metrics)
+    columns = [m for m in metrics if m in COLUMNS]
+    if len(columns) < len(metrics) and "light_raw" not in columns:
+        columns.append("light_raw")
+    fetch = _bucketed if step else _raw
+    rows = fetch(conn, source, start, end, columns, step)
 
     times = [row["t"] for row in rows]
     series = {}
     for metric in metrics:
+        if metric in LIGHT_METRICS:
+            series[metric] = _light_series(metric, rows, step, config, calibration)
+            continue
         series[metric] = {"t": times, "avg": [row[metric] for row in rows]}
         if step:
             series[metric]["min"] = [row[f"{metric}_min"] for row in rows]
             series[metric]["max"] = [row[f"{metric}_max"] for row in rows]
-    threshold = gap_threshold(times, step, beacon_s)
+    threshold = gap_threshold(times, step, config.tag.expected_beacon_interval_s)
     return {
         "resolution": resolution,
         "resolution_ms": step,
@@ -79,8 +91,27 @@ def query(
         "gaps": [
             [a, b] for a, b in zip(times, times[1:]) if b - a > threshold
         ],
-        "night_intervals": [],
+        "calibrated": calibration.calibrated,
+        # Reaches ahead, so that live charts can be shaded without reloading.
+        "night_intervals": sun.night_intervals(
+            config.station, start, end + NIGHT_AHEAD
+        ),
     }
+
+
+def _light_series(metric, rows, step, config, calibration) -> dict:
+    values = []
+    for row in rows:
+        light = row["light_raw"]
+        if metric == "light_norm":
+            values.append(calibration.light_norm(light))
+            continue
+        elevation = sun.elevation(config.station, row["t"] + step // 2)
+        if metric == "clear_sky_norm":
+            values.append(calibration.clear_sky_norm(elevation))
+        else:
+            values.append(calibration.clearness(light, elevation))
+    return {"t": [row["t"] for row in rows], "avg": values}
 
 
 def gap_threshold(times: list[int], step: int, beacon_s: float) -> float:
@@ -93,7 +124,7 @@ def gap_threshold(times: list[int], step: int, beacon_s: float) -> float:
     return max(step, beacon)
 
 
-def _raw(conn, source, start, end, metrics):
+def _raw(conn, source, start, end, metrics, step):
     columns = ", ".join(f"r.{m}" for m in metrics)
     return conn.execute(
         f"""SELECT r.ts_ms AS t, 1 AS n, r.quality = 'suspect' AS suspect,

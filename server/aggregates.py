@@ -9,6 +9,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from server import derive
+from server.calibration import Calibration, sky_condition
 from server.config import Config
 
 MINUTE = 60_000
@@ -28,6 +29,7 @@ def minute_averages(
         f"""SELECT r.ts_ms / {MINUTE} * {MINUTE} AS t,
                    AVG(r.temp_c) AS temp_c, MIN(r.temp_c) AS temp_min,
                    MAX(r.temp_c) AS temp_max,
+                   AVG(r.light_raw) AS light_raw,
                    AVG(r.rh_pct) AS rh_pct, AVG(r.dew_point_c) AS dew_point_c
             FROM readings r JOIN raw_packets p ON p.id = r.raw_id
             WHERE r.ts_ms BETWEEN ? AND ? AND r.quality = 'good' AND p.source = ?
@@ -55,9 +57,13 @@ def local_midnight(ts_ms: int, timezone: str) -> int:
 
 
 def conditions(
-    conn: sqlite3.Connection, config: Config, source: str, end: int
+    conn: sqlite3.Connection,
+    config: Config,
+    source: str,
+    end: int,
+    calibration: Calibration,
 ) -> dict:
-    """Trends and today's figures as of `end`."""
+    """Sky, trends and today's figures as of `end`."""
     midnight = local_midnight(end, config.station.timezone)
     start = min(midnight, end - 60 * MINUTE)
     minutes = minute_averages(conn, source, start, end)
@@ -66,7 +72,10 @@ def conditions(
     low = min((row["temp_min"] for row in today), default=None)
     high = max((row["temp_max"] for row in today), default=None)
     base = config.thresholds.degree_day_base_c
+    sky, clearness = sky_condition(config, calibration, minutes, end)
     return {
+        "sky": sky,
+        "clearness": clearness,
         "trends": trends(minutes, end, 30),
         "trends_60m": trends(minutes, end, 60),
         "today": {

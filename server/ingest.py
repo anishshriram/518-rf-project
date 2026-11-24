@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from server import db
+from server import db, derive
 from server.config import Config, ValidationConfig
 
 CLOCK_SKEW_MS = 10 * 60 * 1000
@@ -91,47 +91,71 @@ def _ingest_packet(conn, config, request, packet, now_ms, readings) -> str:
     raw_id = db.insert_raw(
         conn, {**values, "received_ms": now_ms, "source": request.source}
     )
+    # Simulated and replayed timestamps are not tied to the current time.
+    skew = abs(packet.ts_ms + request.delay_ms - now_ms) > CLOCK_SKEW_MS
+    outcome, reading = store_reading(
+        conn,
+        config,
+        packet,
+        raw_id=raw_id,
+        source=request.source,
+        received_ms=now_ms,
+        clock_skew=skew and request.source == "hardware",
+    )
+    if outcome == "accepted":
+        readings.append(reading)
+    return outcome
+
+
+def store_reading(
+    conn: sqlite3.Connection,
+    config: Config,
+    packet: PacketIn,
+    *,
+    raw_id: int,
+    source: str,
+    received_ms: int,
+    clock_skew: bool,
+) -> tuple[str, dict | None]:
+    """Turn a stored raw packet into a reading if it qualifies.
+
+    Returns the outcome and the reading, which is None if none was stored.
+    """
     if not packet.crc_ok:
-        return "bad_crc"
+        return "bad_crc", None
     allowed = config.tag.allowed_tx_ids
     if allowed and packet.tx_id not in allowed:
-        return "foreign"
+        return "foreign", None
 
     temp_c, rh_pct = convert(config, packet.temp_raw, packet.humidity_raw)
     quality, reason, rh_pct = _assess(
-        conn, config, request, packet, temp_c, rh_pct, now_ms
+        conn, config, packet, source, temp_c, rh_pct, clock_skew
     )
+    derived = {} if quality == "rejected" else derive.instant(temp_c, rh_pct)
     reading = {
-        "raw_id": raw_id,
         "ts_ms": packet.ts_ms,
         "tx_id": packet.tx_id,
         "rssi_dbm": packet.rssi_dbm,
         "temp_c": temp_c,
         "rh_pct": rh_pct,
         "light_raw": packet.light_raw,
+        "dew_point_c": derived.get("dew_point_c"),
+        "heat_index_c": derived.get("heat_index_c"),
+        "abs_humidity_gm3": derived.get("abs_humidity_gm3"),
         "quality": quality,
-        "reject_reason": reason,
     }
-    reading_id = db.insert_reading(conn, reading)
-    if quality == "rejected":
-        return "rejected"
-    readings.append(
-        {
-            "id": reading_id,
-            "ts_ms": packet.ts_ms,
-            "tx_id": packet.tx_id,
-            "temp_c": temp_c,
-            "rh_pct": rh_pct,
-            "dew_point_c": None,
-            "light_raw": packet.light_raw,
-            "light_norm": None,
-            "rssi_dbm": packet.rssi_dbm,
-            "quality": quality,
-            "source": request.source,
-            "received_ms": now_ms,
-        }
+    reading_id = db.insert_reading(
+        conn, {**reading, "raw_id": raw_id, "reject_reason": reason}
     )
-    return "accepted"
+    published = {
+        **reading,
+        **derived,
+        "id": reading_id,
+        "light_norm": None,
+        "source": source,
+        "received_ms": received_ms,
+    }
+    return ("rejected" if quality == "rejected" else "accepted"), published
 
 
 def convert(config: Config, temp_raw: float | None, humidity_raw: float | None):
@@ -140,27 +164,22 @@ def convert(config: Config, temp_raw: float | None, humidity_raw: float | None):
     temp_c = rh_pct = None
     if temp_raw is not None:
         if units.temp_input_unit == "F":
-            temp_raw = (temp_raw - 32) * 5 / 9
+            temp_raw = derive.f_to_c(temp_raw)
         temp_c = temp_raw + units.temp_offset_c
     if humidity_raw is not None:
         rh_pct = humidity_raw * units.humidity_scale + units.humidity_offset_pct
     return temp_c, rh_pct
 
 
-def _assess(conn, config, request, packet, temp_c, rh_pct, now_ms):
+def _assess(conn, config, packet, source, temp_c, rh_pct, clock_skew):
     """Return (quality, reason, possibly clipped rh_pct)."""
     limits = config.validation
-    suspect = []
+    suspect = ["clock_skew"] if clock_skew else []
 
-    if db.reading_exists(conn, packet.tx_id, packet.ts_ms, request.source):
+    if db.reading_exists(conn, packet.tx_id, packet.ts_ms, source):
         return "rejected", "duplicate", rh_pct
     if temp_c is None or rh_pct is None or packet.light_raw is None:
         return "rejected", "missing_value", rh_pct
-
-    # Simulated and replayed timestamps are not tied to the current time.
-    if request.source == "hardware":
-        if abs(packet.ts_ms + request.delay_ms - now_ms) > CLOCK_SKEW_MS:
-            suspect.append("clock_skew")
 
     if not limits.temp_min_c <= temp_c <= limits.temp_max_c:
         return "rejected", "temp_range", rh_pct
@@ -171,7 +190,7 @@ def _assess(conn, config, request, packet, temp_c, rh_pct, now_ms):
         suspect.append("rh_over_100")
 
     previous = db.previous_good(
-        conn, packet.tx_id, packet.ts_ms, request.source, STEP_WINDOW_MS
+        conn, packet.tx_id, packet.ts_ms, source, STEP_WINDOW_MS
     )
     if previous is not None and _is_spike(limits, previous, packet, temp_c, rh_pct):
         return "rejected", "spike", rh_pct

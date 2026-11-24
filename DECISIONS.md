@@ -79,3 +79,24 @@ Choices made where the spec was ambiguous or the environment differed from it.
 - **Chart.js is served locally** rather than from a CDN, so the page works offline.
 - **Deferred:** min/max bands, smoothing and suspect toggles, night shading and
   event markers.
+
+## M3
+
+- **Minute averages are computed on request.** `agg_minute` has no source column,
+  so a rollup table could mix simulated and real data. The tables come with the
+  daily summaries (M6).
+- **Reference time** for trends and "today" is the newest reading, so simulated
+  time works. "Today" is the local calendar day.
+- **Trends:** `trends` covers 30 min (shown on the cards) and `trends_60m` covers
+  60 min. Both need data in at least half of their minutes. The arrow limits for
+  humidity (2 and 10 points per hour) are ours; the spec only gives temperature.
+- **Heat index** is null below 80 °F, where feels-like equals the temperature.
+- **`/api/current`** also returns `cdd_so_far` and `gdd_so_far`.
+- **Recommendations:** only window condensation is shown. The laundry and
+  open-window formulas are tested but need clearness (M4) and alerts (M5).
+- **Open windows, "evening":** noon to 23:00 counts, as does any time the sun is up.
+- **Dew point line** is dashed in the humidity colour; the other candidate hues
+  were too close to the temperature colour.
+- **`server.rebuild`** parses raw lines again and replaces readings. It keeps
+  clock-skew verdicts, because the delivery delay is not stored.
+- **Degree-day totals** per month and season come with the daily summaries (M6).

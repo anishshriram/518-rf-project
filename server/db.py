@@ -3,6 +3,8 @@
 import sqlite3
 from pathlib import Path
 
+from server import derive
+
 SCHEMA_VERSION = 1
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -84,7 +86,7 @@ def previous_good(conn, tx_id: int, ts_ms: int, source: str, window_ms: int):
 
 
 _READING_COLUMNS = """r.id, r.ts_ms, r.tx_id, r.temp_c, r.rh_pct, r.dew_point_c,
-    r.light_raw, r.light_norm, r.rssi_dbm, r.quality, p.source, p.received_ms"""
+    r.heat_index_c, r.abs_humidity_gm3, r.light_raw, r.light_norm, r.rssi_dbm, r.quality, p.source, p.received_ms"""
 
 
 def latest_reading(conn: sqlite3.Connection) -> dict | None:
@@ -94,7 +96,12 @@ def latest_reading(conn: sqlite3.Connection) -> dict | None:
             FROM readings r JOIN raw_packets p ON p.id = r.raw_id
             WHERE r.quality != 'rejected' ORDER BY r.id DESC LIMIT 1"""
     ).fetchone()
-    return dict(row) if row else None
+    return _with_derived(row) if row else None
+
+
+def _with_derived(row: sqlite3.Row) -> dict:
+    """Add the derived values that are not stored."""
+    return {**dict(row), **derive.instant(row["temp_c"], row["rh_pct"])}
 
 
 def readings_after(conn: sqlite3.Connection, last_id: int, limit: int) -> list[dict]:
@@ -106,7 +113,7 @@ def readings_after(conn: sqlite3.Connection, last_id: int, limit: int) -> list[d
             ORDER BY r.id DESC LIMIT ?""",
         (last_id, limit),
     ).fetchall()
-    return [dict(row) for row in reversed(rows)]
+    return [_with_derived(row) for row in reversed(rows)]
 
 
 def bad_crc_since(conn: sqlite3.Connection, ts_ms: int) -> int:

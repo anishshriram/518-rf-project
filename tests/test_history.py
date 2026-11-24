@@ -121,10 +121,19 @@ def test_sources_are_never_mixed(client):
     assert data["series"]["temp_c"]["avg"] == [5]
 
 
-def test_default_range_reaches_simulated_future(client):
-    future = int(time.time() * 1000) + 10 * history.DAY
-    send(client, (future, 20, 45))
-    assert get(client)["series"]["temp_c"]["t"] == [future]
+@pytest.mark.parametrize("days", [-100, 10])
+def test_default_range_follows_simulated_time(client, days):
+    ts = int(time.time() * 1000) + days * history.DAY
+    send(client, (ts, 20, 45))
+    data = get(client, **{"from": ts - 15 * history.MINUTE})
+    assert data["resolution"] == "raw"
+    assert data["series"]["temp_c"]["t"] == [ts]
+
+
+def test_default_range_reaches_now_for_hardware(client):
+    ts = int(time.time() * 1000) - history.DAY
+    send(client, (ts, 20, 45), source="hardware")
+    assert get(client)["series"]["temp_c"]["t"] == []
 
 
 def test_empty_database(client):

@@ -15,6 +15,7 @@ from astral import Observer
 from astral.sun import elevation, sunrise
 
 from server.config import Config, ConfigError, load_config
+from server.derive import rh_from_dew_point
 
 BANNER = [
     "parameters are ac:3",
@@ -56,12 +57,6 @@ SCENARIOS = {
     "covered": Scenario(mean_c=0.5, amplitude_c=0.3, dew_point_c=-2, drift=False),
     "rssi_shift": Scenario(),
 }
-
-
-def rh_from_dew_point(temp_c: float, dew_point_c: float) -> float:
-    """Inverse Magnus formula (spec section 15.1)."""
-    b, c = 17.62, 243.12
-    return 100 * math.exp(b * dew_point_c / (c + dew_point_c) - b * temp_c / (c + temp_c))
 
 
 def clear_sky(elevation_deg: float) -> float:

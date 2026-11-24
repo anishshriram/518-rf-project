@@ -63,6 +63,8 @@ button[aria-pressed="true"] { background: var(--text); color: var(--surface); }
 .card .value { font-size: 2rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 .card .unit { font-size: 1rem; color: var(--text-2); }
 .card .label { color: var(--text-2); font-size: 0.9rem; }
+.card .trend { font-size: 1.4rem; margin-left: 4px; }
+.card .details { color: var(--text-2); font-size: 0.88rem; }
 .stale .value { color: var(--text-2); }
 .windows { display: flex; flex-wrap: wrap; gap: 6px; margin: 16px 0 12px; }
 .charts { display: grid; gap: 12px; }

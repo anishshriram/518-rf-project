@@ -1,7 +1,7 @@
 // Start-up, live stream and page state.
 
 import { Cards } from "./cards.js";
-import { ChartSet, METRICS } from "./charts.js";
+import { ChartSet, HISTORY_KEYS } from "./charts.js";
 import { formatAge, formatTime, tempUnit, toggleUnit } from "./units.js";
 
 const $ = (id) => document.getElementById(id);
@@ -41,6 +41,7 @@ function applyCurrent(data) {
   current = data;
   clockOffset = data.server_ms - Date.now();
   if (data.age_s !== null) lastSeen = data.server_ms - data.age_s * 1000;
+  cards.conditions = data;
   charts.timeZone = cards.timeZone = data.station.timezone;
   $("station").textContent = `— ${data.station.name}`;
   const badge = $("mode");
@@ -60,7 +61,7 @@ async function load() {
     applyCurrent(now);
     lastTs = now.last_reading_ms;
     const from = Math.max(0, Math.floor(windowEnd() - span));
-    const metrics = METRICS.map((m) => m.key).join(",");
+    const metrics = HISTORY_KEYS.join(",");
     const history = await getJson(`api/history?from=${from}&metrics=${metrics}`);
     if (token !== loads) return;
     charts.load(history, span);
@@ -183,7 +184,11 @@ setInterval(() => {
 }, 1000);
 setInterval(() => { if (span >= DAY && connected) load(); }, MINUTE);
 setInterval(async () => {
-  if (!connected || loading || lastSeen !== null) return;
-  try { applyCurrent(await getJson("api/current")); } catch { /* shown by the stream state */ }
+  if (!connected || loading) return;
+  try {
+    const data = await getJson("api/current");
+    // A changed source is handled by load(), which also replaces the charts.
+    if (!loading && data.mode === current?.mode) applyCurrent(data);
+  } catch { /* shown by the stream state */ }
 }, 10000);
 connect();

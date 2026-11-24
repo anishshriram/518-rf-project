@@ -16,7 +16,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import db, history
+from server import aggregates, db, derive, history
 from server.config import Config, ConfigError, load_config
 from server.ingest import IngestRequest, ingest
 from server.stream import Broadcaster
@@ -24,6 +24,19 @@ from server.stream import Broadcaster
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 REPLAY_MAX = 2000
 DEFAULT_SPAN_MS = 15 * history.MINUTE
+CURRENT_VALUES = (
+    "temp_c",
+    "rh_pct",
+    "dew_point_c",
+    "frost_point_c",
+    "heat_index_c",
+    "feels_like_c",
+    "abs_humidity_gm3",
+    "vpd_kpa",
+    "light_raw",
+    "rssi_dbm",
+    "quality",
+)
 Resolution = Literal["auto", "raw", "5s", "1m", "5m", "15m", "1h", "1d"]
 
 
@@ -86,10 +99,11 @@ def create_app(config: Config) -> FastAPI:
             raise HTTPException(422, f"unknown metrics: {', '.join(unknown)}")
         with reader() as conn:
             latest = db.latest_reading(conn)
-            # Simulated time can run ahead of the clock.
             end = to if to is not None else now_ms()
             if to is None and latest:
-                end = max(end, latest["ts_ms"])
+                # Simulated and replayed time can be far from the clock, either way.
+                live = latest["source"] == "hardware"
+                end = max(end, latest["ts_ms"]) if live else latest["ts_ms"]
             start = from_ if from_ is not None else end - DEFAULT_SPAN_MS
             if start > end:
                 raise HTTPException(422, "'from' must not be after 'to'")
@@ -160,11 +174,22 @@ def current(conn, config: Config, now: int) -> dict:
             "offline_critical_s": tag.offline_critical_s,
         },
         "bad_crc_1h": db.bad_crc_since(conn, now - history.HOUR),
-        "temp_c": value("temp_c"),
-        "rh_pct": value("rh_pct"),
-        "light_raw": value("light_raw"),
-        "rssi_dbm": value("rssi_dbm"),
-        "quality": value("quality"),
+        **{name: value(name) for name in CURRENT_VALUES},
+        **(
+            aggregates.conditions(conn, config, latest["source"], latest["ts_ms"])
+            if latest
+            else {"trends": {}, "trends_60m": {}, "today": {}}
+        ),
+        "recommendations": {
+            "window_condensation_risk": derive.condensation_risk(
+                config.home.indoor_setpoint_c,
+                config.home.indoor_rh_assumed,
+                latest["temp_c"],
+                config.home.window_u_value,
+            )
+            if latest
+            else None,
+        },
     }
 
 

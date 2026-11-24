@@ -5,11 +5,20 @@ import { convertTemp, formatNumber, formatTick, formatTime, tempUnit } from "./u
 /* global Chart */
 
 export const METRICS = [
-  { key: "temp_c", title: "Temperature", color: "--temp", digits: 1, minSpan: 2, unit: tempUnit, convert: convertTemp },
+  {
+    key: "temp_c", title: "Temperature", color: "--temp", digits: 1, minSpan: 2, unit: tempUnit, convert: convertTemp,
+    extra: [
+      { key: "dew_point_c", title: "Dew point", color: "--rh", dash: [6, 4] },
+      { key: "heat_index_c", title: "Feels like", color: "--text-2", dash: [2, 3] },
+    ],
+  },
   { key: "rh_pct", title: "Humidity", color: "--rh", digits: 0, minSpan: 10, unit: () => "%" },
   { key: "light_raw", title: "Light", color: "--light", digits: 0, minSpan: 20, unit: () => "raw", zero: true },
   { key: "rssi_dbm", title: "Signal strength", color: "--rssi", digits: 1, minSpan: 10, unit: () => "dBm" },
 ];
+
+const seriesOf = (metric) => [metric, ...(metric.extra ?? [])];
+export const HISTORY_KEYS = METRICS.flatMap((metric) => seriesOf(metric).map((s) => s.key));
 
 const cssColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -25,10 +34,12 @@ const crosshair = {
     ctx.moveTo(active[0].element.x, chartArea.top);
     ctx.lineTo(active[0].element.x, chartArea.bottom);
     ctx.stroke();
-    ctx.fillStyle = chart.data.datasets[0].borderColor;
-    ctx.beginPath();
-    ctx.arc(active[0].element.x, active[0].element.y, 5, 0, 2 * Math.PI);
-    ctx.fill();
+    for (const { element, datasetIndex } of active) {
+      ctx.fillStyle = chart.data.datasets[datasetIndex].borderColor;
+      ctx.beginPath();
+      ctx.arc(element.x, element.y, 5, 0, 2 * Math.PI);
+      ctx.fill();
+    }
     ctx.restore();
   },
 };
@@ -70,17 +81,18 @@ export class ChartSet {
       type: "line",
       plugins: [crosshair],
       data: {
-        datasets: [{
-          label: metric.title,
+        datasets: seriesOf(metric).map((series) => ({
+          label: series.title,
+          borderDash: series.dash ?? [],
           data: [],
           borderWidth: 2,
           pointRadius: (ctx) => (hollow(ctx) ? 4 : isolated(ctx) ? 3 : 0),
           // The crosshair draws the hover dot: built-in hover state goes stale
           // while points scroll.
           pointHoverRadius: 0,
-          pointBackgroundColor: (ctx) => cssColor(hollow(ctx) ? "--surface" : metric.color),
+          pointBackgroundColor: (ctx) => cssColor(hollow(ctx) ? "--surface" : series.color),
           spanGaps: false,
-        }],
+        })),
       },
       options: {
         animation: false,
@@ -89,13 +101,29 @@ export class ChartSet {
         maintainAspectRatio: false,
         interaction: { mode: "nearest", axis: "x", intersect: false },
         plugins: {
-          legend: { display: false },
+          legend: {
+            display: Boolean(metric.extra),
+            align: "end",
+            labels: {
+              usePointStyle: true,
+              pointStyle: "line",
+              pointStyleWidth: 36,
+              boxHeight: 6,
+              // Feels-like exists only in hot weather.
+              generateLabels: (chart) =>
+                Chart.defaults.plugins.legend.labels.generateLabels(chart).map((item) => ({
+                  ...item,
+                  lineDash: chart.data.datasets[item.datasetIndex].borderDash,
+                })),
+              filter: (item, data) => data.datasets[item.datasetIndex].data.some((p) => p.y !== null),
+            },
+          },
           tooltip: {
             displayColors: false,
             callbacks: {
               title: (items) => (items.length ? formatTime(items[0].raw.x, this.timeZone) : ""),
               label: (item) => {
-                const text = `${metric.title}: ${formatNumber(item.raw.y, metric.digits)} ${metric.unit()}`;
+                const text = `${item.dataset.label}: ${formatNumber(item.raw.y, metric.digits)} ${metric.unit()}`;
                 return item.raw.suspect ? `${text} (suspect)` : text;
               },
             },
@@ -141,8 +169,11 @@ export class ChartSet {
   }
 
   #style({ metric, chart }) {
-    const [set] = chart.data.datasets;
-    set.borderColor = set.pointBorderColor = cssColor(metric.color);
+    seriesOf(metric).forEach((series, i) => {
+      const set = chart.data.datasets[i];
+      set.borderColor = set.pointBorderColor = cssColor(series.color);
+    });
+    chart.options.plugins.legend.labels.color = cssColor("--text-2");
     for (const axis of ["x", "y"]) {
       const { ticks, grid } = chart.options.scales[axis];
       ticks.color = cssColor("--text-2");
@@ -163,13 +194,15 @@ export class ChartSet {
     this.step = history.resolution_ms;
     this.gapMs = history.gap_threshold_ms;
     for (const { metric, chart } of this.charts) {
-      const { t, avg } = history.series[metric.key];
-      const points = [];
-      t.forEach((x, i) => {
-        if (i && x - t[i - 1] > this.gapMs) points.push(this.#gap(t[i - 1]));
-        points.push(this.#point(metric, x, avg[i], history.suspect[i]));
+      seriesOf(metric).forEach((series, index) => {
+        const { t, avg } = history.series[series.key];
+        const points = [];
+        t.forEach((x, i) => {
+          if (i && x - t[i - 1] > this.gapMs) points.push(this.#gap(t[i - 1]));
+          points.push(this.#point(metric, x, avg[i], history.suspect[i]));
+        });
+        chart.data.datasets[index].data = points;
       });
-      chart.data.datasets[0].data = points;
     }
     const times = history.series[METRICS[0].key].t;
     this.lastTime = times.at(-1) ?? null;
@@ -195,16 +228,18 @@ export class ChartSet {
     this.bucketCount = sameBucket ? this.bucketCount + 1 : 1;
     const gap = this.lastTime !== null && time - this.lastTime > this.gapMs;
     for (const { metric, chart } of this.charts) {
-      const { data } = chart.data.datasets[0];
-      const value = reading[metric.key];
-      if (sameBucket) {
-        const old = data.at(-1);
-        const mean = old.base + (value - old.base) / this.bucketCount;
-        data[data.length - 1] = this.#point(metric, time, mean, false);
-      } else {
-        if (gap) data.push(this.#gap(this.lastTime));
-        data.push(this.#point(metric, time, value, reading.quality === "suspect"));
-      }
+      seriesOf(metric).forEach((series, index) => {
+        const { data } = chart.data.datasets[index];
+        const value = reading[series.key] ?? null;
+        if (sameBucket) {
+          const old = data.at(-1).base;
+          const mean = old === null || value === null ? value ?? old : old + (value - old) / this.bucketCount;
+          data[data.length - 1] = this.#point(metric, time, mean, false);
+        } else {
+          if (gap) data.push(this.#gap(this.lastTime));
+          data.push(this.#point(metric, time, value, reading.quality === "suspect"));
+        }
+      });
     }
     this.lastTime = time;
     return true;
@@ -221,10 +256,11 @@ export class ChartSet {
     this.redraw = null;
     const start = this.end - this.spanMs;
     for (const { chart } of this.charts) {
-      const { data } = chart.data.datasets[0];
-      const first = data.findIndex((p) => p.x >= start - Math.max(this.step, 1));
-      if (first > 0) data.splice(0, first);
-      else if (first < 0) data.length = 0;
+      for (const { data } of chart.data.datasets) {
+        const first = data.findIndex((p) => p.x >= start - Math.max(this.step, 1));
+        if (first > 0) data.splice(0, first);
+        else if (first < 0) data.length = 0;
+      }
       chart.options.scales.x.min = start;
       chart.options.scales.x.max = this.end;
       chart.update("none");
@@ -234,8 +270,9 @@ export class ChartSet {
   /** Re-express existing points after a unit change. */
   changeUnit() {
     for (const entry of this.charts) {
-      const [set] = entry.chart.data.datasets;
-      set.data = set.data.map((p) => ({ ...p, y: entry.metric.convert ? entry.metric.convert(p.base) : p.base }));
+      for (const set of entry.chart.data.datasets) {
+        set.data = set.data.map((p) => ({ ...p, y: entry.metric.convert ? entry.metric.convert(p.base) : p.base }));
+      }
       this.#title(entry);
     }
   }

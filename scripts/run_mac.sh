@@ -10,7 +10,11 @@ sudo -v
 python -m server.app &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null || true' EXIT
-sleep 1
+sleep 2
+if ! kill -0 $SERVER_PID 2>/dev/null; then
+  echo "The server did not start. Is another one already running?" >&2
+  exit 1
+fi
 # caffeinate keeps the Mac from sleeping, which would stop data collection.
 caffeinate -i bash -c 'sudo "$STDBUF" -o0 "$RECV_DIR/pip_sense.v2" l l \
   | python -u -m collector.collector --source hardware --record'

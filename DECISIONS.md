@@ -55,3 +55,27 @@ Choices made where the spec was ambiguous or the environment differed from it.
   background jobs of section 12.1 (with the milestones that use them).
 - **Extra test files:** `test_config.py`, `test_simulator.py`,
   `test_collector.py`.
+
+## M2
+
+- **Simulator database:** `run_sim.sh` uses `data/simulator.db` and replaces it on
+  each run. Simulated time overlaps between runs, and simulated rows must not
+  mix with real ones. `PIP_DB_PATH` and `PIP_SPOOL_PATH` override the paths.
+- **History shows one source only:** that of the latest reading.
+- **Window end:** the clock for hardware data, the newest reading for simulated
+  or replayed data.
+- **Extra `5s` resolution:** the spec's "up to 2 h is raw" would give 7200 points,
+  above its limit of 2000. `auto` uses raw up to 30 min and 5 s up to 2 h.
+  Explicit `raw` is limited to 6 h.
+- **Buckets are computed on request** from `readings`, so they cannot disagree
+  with live data. Rollup tables come with the milestones that need them. `1d`
+  buckets are UTC days for now.
+- **Extra response fields:** `/api/history` adds `resolution_ms`, `source`, `n`,
+  `suspect`, `last_id` and `gap_threshold_ms`. `night_intervals` stays empty
+  until M4. `/api/current` has only the fields available so far, plus status.
+- **Light** is charted as raw values until calibration exists (M4).
+- **RSSI** has its own chart. Packet success is not put on a second axis, since
+  two scales on one plot suggest a relation that is not in the data.
+- **Chart.js is served locally** rather than from a CDN, so the page works offline.
+- **Deferred:** min/max bands, smoothing and suspect toggles, night shading and
+  event markers.

@@ -59,23 +59,29 @@ def ingest(
     config: Config,
     request: IngestRequest,
     now_ms: int | None = None,
-) -> dict[str, int]:
-    """Store one batch in a single transaction and return the outcome counts."""
+) -> tuple[dict[str, int], list[dict]]:
+    """Store one batch in a single transaction.
+
+    Returns the outcome counts and the stored readings that were not rejected.
+    """
     if now_ms is None:
         now_ms = time.time_ns() // 1_000_000
     counts = {"accepted": 0, "rejected": 0, "bad_crc": 0, "foreign": 0}
+    readings: list[dict] = []
     with conn:
         for packet in request.packets:
-            outcome = _ingest_packet(conn, config, request, packet, now_ms)
+            outcome = _ingest_packet(
+                conn, config, request, packet, now_ms, readings
+            )
             counts[outcome] += 1
         for summary in request.summaries:
             db.insert_receiver_stats(
                 conn, {"received_ms": now_ms, **summary.model_dump()}
             )
-    return counts
+    return counts, readings
 
 
-def _ingest_packet(conn, config, request, packet, now_ms) -> str:
+def _ingest_packet(conn, config, request, packet, now_ms, readings) -> str:
     # Already stored: the collector resent a batch whose response was lost.
     if db.raw_exists(conn, packet.ts_ms, packet.raw_line, request.source):
         return "rejected"
@@ -95,21 +101,37 @@ def _ingest_packet(conn, config, request, packet, now_ms) -> str:
     quality, reason, rh_pct = _assess(
         conn, config, request, packet, temp_c, rh_pct, now_ms
     )
-    db.insert_reading(
-        conn,
+    reading = {
+        "raw_id": raw_id,
+        "ts_ms": packet.ts_ms,
+        "tx_id": packet.tx_id,
+        "rssi_dbm": packet.rssi_dbm,
+        "temp_c": temp_c,
+        "rh_pct": rh_pct,
+        "light_raw": packet.light_raw,
+        "quality": quality,
+        "reject_reason": reason,
+    }
+    reading_id = db.insert_reading(conn, reading)
+    if quality == "rejected":
+        return "rejected"
+    readings.append(
         {
-            "raw_id": raw_id,
+            "id": reading_id,
             "ts_ms": packet.ts_ms,
             "tx_id": packet.tx_id,
-            "rssi_dbm": packet.rssi_dbm,
             "temp_c": temp_c,
             "rh_pct": rh_pct,
+            "dew_point_c": None,
             "light_raw": packet.light_raw,
+            "light_norm": None,
+            "rssi_dbm": packet.rssi_dbm,
             "quality": quality,
-            "reject_reason": reason,
-        },
+            "source": request.source,
+            "received_ms": now_ms,
+        }
     )
-    return "rejected" if quality == "rejected" else "accepted"
+    return "accepted"
 
 
 def convert(config: Config, temp_raw: float | None, humidity_raw: float | None):

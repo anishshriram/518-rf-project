@@ -92,6 +92,7 @@ def station(tmp_path):
     class Station:
         db_path = tmp_path / "e2e.db"
         spool_path = tmp_path / "spool.jsonl"
+        url = f"http://127.0.0.1:{port}"
 
         def spawn(self, *args, **kwargs):
             process = subprocess.Popen(
@@ -194,3 +195,25 @@ def test_server_restart_loses_nothing(station):
     assert station.query(
         "SELECT COUNT(*) FROM (SELECT DISTINCT ts_ms FROM readings)"
     ) == total
+
+
+def test_stream_delivers_and_server_still_stops(station):
+    server = station.start_server()
+    output = station.simulate("--duration", "5", "--noise-rate", "0", "--drop-rate", "0")
+    seen = []
+    with httpx.stream("GET", f"{station.url}/api/stream", timeout=15) as response:
+        assert response.headers["content-type"].startswith("text/event-stream")
+        lines = response.iter_lines()
+        assert next(lines) == "event: heartbeat"
+        collector = station.spawn(
+            "collector.collector", "--source", "simulator", stdin=subprocess.PIPE
+        )
+        collector.communicate(output, timeout=30)
+        for line in lines:
+            if line.startswith("id: "):
+                seen.append(int(line[4:]))
+            if len(seen) == 5:
+                break
+        server.terminate()  # with the stream still open
+        server.wait(10)
+    assert seen == [1, 2, 3, 4, 5]

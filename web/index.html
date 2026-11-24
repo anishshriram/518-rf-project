@@ -1,3 +1,47 @@
 <!DOCTYPE html>
-<!-- Placeholder: the dashboard starts in milestone M2. -->
-<title>PIP Weather</title>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PIP Weather</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header>
+    <h1>PIP Weather <span id="station"></span></h1>
+    <span id="mode" class="badge" hidden></span>
+    <span id="status" class="status" role="status">Connecting…</span>
+    <button id="unit" type="button" aria-label="Switch temperature unit">°C</button>
+  </header>
+
+  <div id="unreachable" class="banner critical" role="alert" hidden>✕ Server not reachable — retrying…</div>
+  <div id="offline" class="banner warning" role="alert" hidden></div>
+  <section id="waiting" class="banner info" hidden>
+    <strong id="waiting-title"></strong>
+    <ul>
+      <li>Is the battery fitted and fresh?</li>
+      <li>Is the tag close to the receiver?</li>
+      <li>Does the tag ID in <code>config.toml</code> match the sticker on the tag?</li>
+    </ul>
+  </section>
+
+  <main>
+    <section id="cards" class="cards" aria-label="Latest values"></section>
+    <nav id="windows" class="windows" aria-label="Time window"></nav>
+    <section id="charts" class="charts"></section>
+    <details>
+      <summary>Latest readings as a table</summary>
+      <table>
+        <thead><tr id="table-head"></tr></thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </details>
+    <p class="note">Hollow points are suspect readings. Lines break where data is missing.</p>
+  </main>
+
+  <script src="vendor/chart.umd.js"></script>
+  <script src="vendor/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -81,3 +81,43 @@ def previous_good(conn, tx_id: int, ts_ms: int, source: str, window_ms: int):
            ORDER BY r.ts_ms DESC LIMIT 1""",
         (ts_ms, ts_ms - window_ms, tx_id, source),
     ).fetchone()
+
+
+_READING_COLUMNS = """r.id, r.ts_ms, r.tx_id, r.temp_c, r.rh_pct, r.dew_point_c,
+    r.light_raw, r.light_norm, r.rssi_dbm, r.quality, p.source, p.received_ms"""
+
+
+def latest_reading(conn: sqlite3.Connection) -> dict | None:
+    """Most recently stored reading that was not rejected."""
+    row = conn.execute(
+        f"""SELECT {_READING_COLUMNS}
+            FROM readings r JOIN raw_packets p ON p.id = r.raw_id
+            WHERE r.quality != 'rejected' ORDER BY r.id DESC LIMIT 1"""
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def readings_after(conn: sqlite3.Connection, last_id: int, limit: int) -> list[dict]:
+    """The newest `limit` readings with a higher id, oldest first."""
+    rows = conn.execute(
+        f"""SELECT {_READING_COLUMNS}
+            FROM readings r JOIN raw_packets p ON p.id = r.raw_id
+            WHERE r.id > ? AND r.quality != 'rejected'
+            ORDER BY r.id DESC LIMIT ?""",
+        (last_id, limit),
+    ).fetchall()
+    return [dict(row) for row in reversed(rows)]
+
+
+def bad_crc_since(conn: sqlite3.Connection, ts_ms: int) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM raw_packets WHERE ts_ms >= ? AND NOT crc_ok", (ts_ms,)
+    ).fetchone()[0]
+
+
+def open_reader(path: str) -> sqlite3.Connection:
+    """A separate connection for queries, so they never hold up ingest."""
+    conn = sqlite3.connect(path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA query_only=ON")
+    return conn

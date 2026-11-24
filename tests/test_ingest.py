@@ -35,7 +35,8 @@ def packet(ts=NOW, **changes):
 
 def send(conn, config, *packets, source="hardware", now=NOW, **extra):
     request = IngestRequest(source=source, packets=list(packets), **extra)
-    return ingest(conn, config, request, now_ms=now)
+    counts, _ = ingest(conn, config, request, now_ms=now)
+    return counts
 
 
 def readings(conn):

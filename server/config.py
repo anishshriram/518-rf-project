@@ -144,12 +144,21 @@ def load_config(path: str | None = None) -> Config:
     if not file.exists():
         if explicit:
             raise ConfigError(f"config file not found: {file}")
-        return Config()
+        return _apply_environment(Config())
     try:
         data = tomllib.loads(file.read_text(encoding="utf-8"))
     except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError) as exc:
         raise ConfigError(f"cannot read {file}: {exc}") from exc
-    return parse_config(data)
+    return _apply_environment(parse_config(data))
+
+
+def _apply_environment(config: Config) -> Config:
+    """Let scripts choose data files without editing the config file."""
+    config.server.db_path = os.environ.get("PIP_DB_PATH", config.server.db_path)
+    config.collector.spool_path = os.environ.get(
+        "PIP_SPOOL_PATH", config.collector.spool_path
+    )
+    return config
 
 
 def parse_config(data: dict) -> Config:

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
-# Placeholder: implemented in milestone M1.
-echo "record.sh is not implemented yet (milestone M1)" >&2
-exit 1
+# Save raw receiver output to logs/YYYY-MM-DD.log without running the server.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+RECV_DIR="${RECV_DIR:-/Users/anishshriram/Downloads/PIPtagCode/ReceiverCode}"
+STDBUF="$(command -v gstdbuf || command -v stdbuf)" || { echo "stdbuf not found (macOS: brew install coreutils)" >&2; exit 1; }
+mkdir -p logs
+sudo "$STDBUF" -o0 "$RECV_DIR/pip_sense.v2" l l | tee -a "logs/$(date +%F).log"

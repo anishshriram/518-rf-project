@@ -33,9 +33,9 @@ TAG_DIES_AFTER_S = 30 * 60
 
 @dataclass(frozen=True)
 class Scenario:
-    mean_c: float = 8.0
-    amplitude_c: float = 5.0
-    dew_point_c: float = 0.0
+    mean_c: float = 12.0
+    amplitude_c: float = 2.5
+    dew_point_c: float = 4.0
     min_hour: float | None = None  # hour of the daily minimum; None = sunrise
     cloud: float | None = None  # fixed cloud factor; None = varying
     drift: bool = True
@@ -45,16 +45,16 @@ SCENARIOS = {
     "normal": Scenario(),
     "cold_front": Scenario(drift=False),
     "frost_night": Scenario(
-        mean_c=3, dew_point_c=-3, min_hour=5, cloud=1.0, drift=False
+        mean_c=3, amplitude_c=5, dew_point_c=-3, min_hour=5, cloud=1.0, drift=False
     ),
-    "heat_wave": Scenario(mean_c=33, dew_point_c=24, drift=False),
+    "heat_wave": Scenario(mean_c=33, amplitude_c=4, dew_point_c=24, drift=False),
     "storm": Scenario(
         mean_c=14, amplitude_c=1, dew_point_c=12, cloud=0.9, drift=False
     ),
     "fog_morning": Scenario(drift=False),
     "night_activity": Scenario(),
     "tag_dies": Scenario(),
-    "sun_exposed": Scenario(cloud=1.0, drift=False),
+    "sun_exposed": Scenario(mean_c=8, dew_point_c=0, cloud=1.0, drift=False),
     "covered": Scenario(mean_c=0.5, amplitude_c=0.3, dew_point_c=-2, drift=False),
     "rssi_shift": Scenario(),
 }
@@ -126,14 +126,20 @@ class Weather:
         rho = math.exp(-dt / 60)
         self._noise_t = rho * self._noise_t + gauss(0, 0.05 * math.sqrt(1 - rho**2))
         if self._params.drift:
-            self._drift_t += gauss(0, 0.3 * math.sqrt(dt / 3600))
-            self._drift_td += gauss(0, 0.15 * math.sqrt(dt / 3600))
+            # Pulled back over 6 h, so that long runs stay realistic.
+            keep = math.exp(-dt / 21_600)
+            self._drift_t = keep * self._drift_t + gauss(0, 0.15 * math.sqrt(dt / 3600))
+            self._drift_td = keep * self._drift_td + gauss(
+                0, 0.08 * math.sqrt(dt / 3600)
+            )
         if self._params.cloud is not None:
             self._cloud = self._params.cloud
         else:
             if self._rng.random() < dt / 1800:
                 self._cloud_target = self._rng.uniform(0.2, 1.0)
-            self._cloud += (self._cloud_target - self._cloud) * (1 - math.exp(-dt / 300))
+            self._cloud += (self._cloud_target - self._cloud) * (
+                1 - math.exp(-dt / 2400)
+            )
 
     def _event_hours(self, local: datetime, event_hour: float) -> float:
         """Hours since the first occurrence of event_hour at or after the start."""
@@ -182,7 +188,7 @@ class Weather:
         rh += (97 - rh) * storm
         rh = min(100.0, max(0.0, rh + self._rng.gauss(0, 0.5)))
 
-        light += self._rng.gauss(0, 1.5)
+        light += self._rng.gauss(0, 0.8)
         if name == "night_activity":
             second = local.hour * 3600 + local.minute * 60 + local.second
             if 0 <= second - (23 * 3600 + 12 * 60) < 20:

@@ -14,13 +14,15 @@ from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import aggregates, calibration, db, derive, history, sun
+from server import aggregates, calibration, db, derive, history, notify_email, sun
+from server.alerts import AlertManager, query_events
 from server.calibration import Calibrator
 from server.config import Config, ConfigError, load_config
+from server.inference import Engine
 from server.ingest import IngestRequest, ingest
 from server.stream import Broadcaster
 
@@ -57,10 +59,15 @@ def create_app(config: Config) -> FastAPI:
     async def lifespan(app: FastAPI):
         app.state.db = db.connect(config.server.db_path)
         broadcaster.start()
-        task = asyncio.create_task(calibration_loop())
+        app.state.alerts = make_alerts(app.state.db)
+        tasks = [
+            asyncio.create_task(calibration_loop()),
+            asyncio.create_task(inference_loop()),
+        ]
         yield
-        task.cancel()
-        await asyncio.gather(task, return_exceptions=True)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         with db_lock:
             app.state.db.close()
 
@@ -94,6 +101,51 @@ def create_app(config: Config) -> FastAPI:
                 logger.exception("Light calibration failed")
             # Stay light on the CPU when simulated hours pass quickly.
             await asyncio.sleep(max(5.0, 10 * (time.monotonic() - started)))
+
+    def make_alerts(conn) -> AlertManager:
+        sender = None
+        if config.alerts.email_enabled:
+            missing = notify_email.missing_settings(config)
+            if missing:
+                logger.warning("Alert emails are off; missing: %s", ", ".join(missing))
+            else:
+
+                def latest():
+                    with reader() as connection:
+                        return db.latest_reading(connection)
+
+                sender = notify_email.EmailSender(
+                    config, latest, lambda event_id: alerts.mark_emailed(event_id)
+                ).put
+        alerts = AlertManager(
+            conn, db_lock, config, broadcaster.publish_event, sender, now_ms
+        )
+        return alerts
+
+    engines: dict[str, Engine] = {}
+
+    def run_inference() -> None:
+        with reader() as conn:
+            # One snapshot for the whole tick: packets that arrive meanwhile must
+            # not make the last known reading look old.
+            conn.execute("BEGIN")
+            latest = db.latest_reading(conn)
+            if latest is None:
+                return
+            source = latest["source"]
+            if source not in engines:
+                engines[source] = Engine(config, source, app.state.alerts)
+            engines[source].tick(conn, calibrator.get(conn, source), now_ms())
+
+    async def inference_loop() -> None:
+        while True:
+            started = time.monotonic()
+            try:
+                await asyncio.to_thread(run_inference)
+            except Exception:
+                logger.exception("Inference failed")
+                await asyncio.sleep(5)
+            await asyncio.sleep(max(1.0, time.monotonic() - started))
 
     def add_light(conn, reading: dict) -> dict:
         """Fill in the values that depend on the light calibration."""
@@ -170,6 +222,66 @@ def create_app(config: Config) -> FastAPI:
                 calibration=calibrator.get(conn, source),
             )
 
+    @app.get("/api/events", summary="Inferences and alerts, newest first")
+    def get_events(
+        from_: Annotated[int | None, Query(alias="from", ge=0, lt=2**53)] = None,
+        to: Annotated[int | None, Query(ge=0, lt=2**53)] = None,
+        active: bool | None = None,
+        type_: Annotated[str | None, Query(alias="type")] = None,
+        limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+    ) -> list[dict]:
+        with reader() as conn:
+            latest = db.latest_reading(conn)
+            source = latest["source"] if latest else "hardware"
+            return query_events(conn, source, from_, to, active, type_, limit)
+
+    @app.post(
+        "/api/events/{event_id}/ack",
+        summary="Dismiss an alert",
+        dependencies=[Depends(same_site)],
+    )
+    def post_ack(event_id: int) -> dict[str, bool]:
+        if not 0 <= event_id < 2**63 or not app.state.alerts.acknowledge(event_id):
+            raise HTTPException(404, "no such event")
+        return {"acknowledged": True}
+
+    @app.post(
+        "/api/alerts/test",
+        summary="Send a test alert through every enabled channel",
+        dependencies=[Depends(same_site)],
+    )
+    def post_test_alert() -> dict[str, str]:
+        event = {
+            "id": None,
+            "type": "test",
+            "severity": "watch",
+            "title": "Test alert",
+            "explanation": "This is only a test. Nothing is wrong.",
+            "start_ms": now_ms(),
+            "source": None,
+            "notify": True,
+        }
+        broadcaster.publish_event("alert", event)
+        email = "disabled"
+        if config.alerts.email_enabled:
+            missing = notify_email.missing_settings(config)
+            if missing:
+                email = f"not configured: {', '.join(missing)}"
+            else:
+                try:
+                    with reader() as conn:
+                        latest = db.latest_reading(conn)
+                    notify_email.send(notify_email.build_message(config, event, latest))
+                    email = "sent"
+                except Exception as exc:
+                    logger.error("Test email failed: %s", exc)
+                    email = f"failed: {type(exc).__name__}"
+        return {
+            "dashboard": "sent",
+            "browser": "sent" if config.alerts.browser_notifications else "disabled",
+            "email": email,
+        }
+
     @app.get(
         "/api/stream",
         summary="Live readings as Server-Sent Events",
@@ -213,6 +325,22 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
         elif age_s >= tag.offline_warning_s:
             status = "offline_warning"
     light = calibrator.get(conn, latest["source"]) if latest else None
+    active = (
+        {e["type"] for e in query_events(conn, latest["source"], active=True)}
+        if latest
+        else set()
+    )
+    conditions = (
+        aggregates.conditions(conn, config, latest["source"], latest["ts_ms"], light)
+        if latest
+        else {
+            "sky": None,
+            "clearness": None,
+            "trends": {},
+            "trends_60m": {},
+            "today": {},
+        }
+    )
     value: Callable = (latest or {}).get
     return {
         "station": {"name": config.station.name, "timezone": config.station.timezone},
@@ -228,27 +356,21 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
         },
         "bad_crc_1h": db.bad_crc_since(conn, now - history.HOUR),
         **{name: value(name) for name in CURRENT_VALUES},
-        **(
-            aggregates.conditions(
-                conn, config, latest["source"], latest["ts_ms"], light
-            )
-            if latest
-            else {
-                "sky": None,
-                "clearness": None,
-                "trends": {},
-                "trends_60m": {},
-                "today": {},
-            }
-        ),
+        **conditions,
         "light_norm": light.light_norm(latest["light_raw"]) if latest else None,
         "sun": sun_info(config, latest["ts_ms"] if latest else now),
         "flags": {
             "calibrating_light": light is None or not light.calibrated,
             "light_saturated": latest is not None
             and light.is_saturated(latest["light_raw"]),
+            "solar_heating": "solar_heating" in active,
         },
+        "browser_notifications": config.alerts.browser_notifications,
         "recommendations": {
+            "open_windows": "open_windows" in active if latest else None,
+            "laundry_score": laundry(conditions, latest, "rain_onset" in active)
+            if latest
+            else None,
             "window_condensation_risk": derive.condensation_risk(
                 config.home.indoor_setpoint_c,
                 config.home.indoor_rh_assumed,
@@ -259,6 +381,22 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
             else None,
         },
     }
+
+
+def laundry(conditions: dict, latest: dict, rain: bool) -> float | None:
+    """Drying score; None in daytime while the sky is unknown."""
+    clearness = conditions["clearness"]
+    if clearness is None:
+        if conditions["sky"] is None:
+            return None
+        clearness = 0.0  # night or twilight
+    return derive.laundry_score(latest["temp_c"], latest["rh_pct"], clearness, rain)
+
+
+def same_site(sec_fetch_site: Annotated[str | None, Header()] = None) -> None:
+    """Keep other web pages from triggering actions here."""
+    if sec_fetch_site in ("cross-site", "same-site"):
+        raise HTTPException(403, "cross-site request")
 
 
 def sun_info(config: Config, ts_ms: int) -> dict:

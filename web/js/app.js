@@ -1,5 +1,6 @@
 // Start-up, live stream and page state.
 
+import { Alerts } from "./alerts.js";
 import { Cards } from "./cards.js";
 import { ChartSet, HISTORY_KEYS } from "./charts.js";
 import { formatAge, formatTime, tempUnit, toggleUnit } from "./units.js";
@@ -14,6 +15,8 @@ const WINDOWS = [
 const charts = new ChartSet($("charts"));
 const cards = new Cards($("cards"), $("table-head"), $("table-body"));
 
+const alerts = new Alerts($("alerts"), $("timeline"));
+
 let span = WINDOWS[0][1];
 let current = null;     // last /api/current response
 let clockOffset = 0;    // server clock minus browser clock
@@ -21,6 +24,7 @@ let lastSeen = null;    // server-clock time of the newest packet
 let lastTs = null;      // newest reading timestamp
 let lastId = 0;
 let shadedUntil = Infinity; // night shading is known up to here
+let eventsTimer = null;
 let loads = 0;
 let loading = false;
 let reloadTimer = null;
@@ -43,12 +47,48 @@ function applyCurrent(data) {
   clockOffset = data.server_ms - Date.now();
   if (data.age_s !== null) lastSeen = data.server_ms - data.age_s * 1000;
   cards.conditions = data;
-  charts.timeZone = cards.timeZone = data.station.timezone;
+  charts.timeZone = cards.timeZone = alerts.timeZone = data.station.timezone;
   $("station").textContent = `— ${data.station.name}`;
+  renderAdvice(data);
+  $("enable-notifications").hidden = !data.browser_notifications
+    || !("Notification" in window) || Notification.permission !== "default";
   const badge = $("mode");
   badge.hidden = data.mode === null;
   badge.className = `badge ${data.mode ?? ""}`;
   badge.textContent = { simulator: "⚠ SIMULATED DATA", replay: "↻ REPLAYED DATA" }[data.mode] ?? "● LIVE (hardware)";
+}
+
+function renderAdvice({ recommendations: r }) {
+  $("advice").hidden = r.window_condensation_risk === null;
+  const score = r.laundry_score;
+  const label = score >= 70 ? "great" : score >= 40 ? "okay" : "poor";
+  $("advice").textContent = [
+    r.open_windows ? "✓ Good time to open windows" : "✗ Keep windows closed",
+    `Laundry drying: ${score === null ? "–" : `${Math.round(score)} (${label})`}`,
+    `Window condensation: ${r.window_condensation_risk} (estimate)`,
+  ].join("  ·  ");
+}
+
+async function loadEvents() {
+  if (lastTs === null) {
+    alerts.setEvents([]);
+    charts.events = [];
+    return;
+  }
+  const from = Math.max(0, Math.floor(windowEnd() - Math.max(span, 7 * DAY)));
+  try {
+    const events = await getJson(`api/events?from=${from}`);
+    alerts.setEvents(events);
+    charts.events = events;
+    charts.draw(windowEnd());
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+/** Events often come in groups: fetch the list once for all of them. */
+function scheduleEvents() {
+  eventsTimer ??= setTimeout(() => { eventsTimer = null; loadEvents(); }, 500);
 }
 
 /** Fetch state and history. Readings that arrive meanwhile are buffered. */
@@ -79,6 +119,7 @@ async function load() {
     charts.drawNow();
     cards.render();
     renderState();
+    loadEvents();
   } catch (error) {
     console.warn(error);
     if (token === loads) scheduleLoad(3000);
@@ -130,6 +171,7 @@ function renderState() {
   const age = Math.max(0, (serverNow() - lastSeen) / 1000);
   const offline = age >= current.tag.offline_warning_s;
   const critical = age >= current.tag.offline_critical_s;
+  alerts.setOfflineShown(offline);
   cards.setStale(offline || !connected);
   $("offline").hidden = !offline;
   $("offline").className = `banner ${critical ? "critical" : "warning"}`;
@@ -147,6 +189,11 @@ function connect() {
     load(); // also fills in whatever was missed while disconnected
   });
   source.addEventListener("reading", (event) => onReading(JSON.parse(event.data)));
+  source.addEventListener("alert", (event) => {
+    alerts.onAlert(JSON.parse(event.data), current?.browser_notifications);
+    scheduleEvents();
+  });
+  for (const name of ["alert_cleared", "inference"]) source.addEventListener(name, scheduleEvents);
   source.addEventListener("calibration", () => load()); // the light scale changed
   source.addEventListener("error", () => {
     connected = false;
@@ -168,6 +215,12 @@ for (const [label, ms] of WINDOWS) {
   });
   $("windows").append(button);
 }
+
+$("enable-notifications").addEventListener("click", async () => {
+  await Notification.requestPermission();
+  $("enable-notifications").hidden = true;
+});
+$("test-alert").addEventListener("click", () => fetch("api/alerts/test", { method: "POST" }).catch(() => {}));
 
 const showUnit = () => { $("unit").textContent = tempUnit(); };
 $("unit").addEventListener("click", () => {

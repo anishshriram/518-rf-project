@@ -49,6 +49,7 @@ function skyLine(c) {
 const DETAILS = {
   temp_c: (r, c) => [
     [`Feels like ${temp(r.feels_like_c)}`, "Uses humidity in hot weather. Wind is not measured, so there is no wind chill."],
+    ...(c.flags?.solar_heating ? [["⚠ Sun-affected: may read high", "The sensor seems to be in direct sun", "chip"]] : []),
     [`High ${temp(extreme(Math.max, c.today?.temp_max_c, r))} · Low ${temp(extreme(Math.min, c.today?.temp_min_c, r))}`,
       "Today, in station time"],
   ],
@@ -56,7 +57,6 @@ const DETAILS = {
     [`Dew point ${temp(r.dew_point_c)}`, "Temperature at which the air becomes saturated"],
     [`Absolute ${formatNumber(r.abs_humidity_gm3, 1)} g/m³ · VPD ${formatNumber(r.vpd_kpa, 2)} kPa`,
       "VPD (vapour pressure deficit): how strongly the air dries things"],
-    [`Window condensation ⓘ: ${c.recommendations?.window_condensation_risk ?? "–"}`, "Estimate based on your indoor settings"],
   ],
   light_raw: (r, c, timeZone) => [
     skyLine(c),

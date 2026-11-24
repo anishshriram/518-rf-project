@@ -17,6 +17,7 @@
 
   <div id="unreachable" class="banner critical" role="alert" hidden>✕ Server not reachable — retrying…</div>
   <div id="offline" class="banner warning" role="alert" hidden></div>
+  <div id="alerts" aria-live="assertive"></div>
   <section id="waiting" class="banner info" hidden>
     <strong id="waiting-title"></strong>
     <ul>
@@ -28,8 +29,17 @@
 
   <main>
     <section id="cards" class="cards" aria-label="Latest values"></section>
+    <p id="advice" class="advice" hidden></p>
     <nav id="windows" class="windows" aria-label="Time window"></nav>
     <section id="charts" class="charts"></section>
+    <section class="chart timeline">
+      <div class="timeline-head">
+        <h2>Events</h2>
+        <button id="enable-notifications" type="button" hidden>Enable notifications</button>
+        <button id="test-alert" type="button">Send test alert</button>
+      </div>
+      <ol id="timeline"></ol>
+    </section>
     <details>
       <summary>Latest readings as a table</summary>
       <table>
@@ -37,7 +47,7 @@
         <tbody id="table-body"></tbody>
       </table>
     </details>
-    <p class="note">Hollow points are suspect readings. Lines break where data is missing. Shaded areas are night.</p>
+    <p class="note">Hollow points are suspect readings. Lines break where data is missing. Shaded areas are night; dotted vertical lines are events.</p>
   </main>
 
   <script src="vendor/chart.umd.js"></script>

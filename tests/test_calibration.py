@@ -209,7 +209,8 @@ def test_api_before_and_after_calibration(config, monkeypatch):
             import time
 
             time.sleep(0.05)
-        assert data["flags"] == {"calibrating_light": False, "light_saturated": False}
+        assert data["flags"] == {"calibrating_light": False, "light_saturated": False,
+                                 "solar_heating": False}
         assert data["sky"] == "clear"
         assert data["clearness"] == pytest.approx(1, abs=0.03)
         assert data["sun"]["is_daylight"]
@@ -221,7 +222,7 @@ def test_api_before_and_after_calibration(config, monkeypatch):
             series["clear_sky_norm"]["avg"], rel=0.05
         )
         assert len(history["night_intervals"]) == 2  # the two nights ahead
-    stored = conn.execute("SELECT COUNT(*) FROM calibration").fetchone()[0]
+    stored = conn.execute("SELECT COUNT(*) FROM calibration WHERE key NOT LIKE '%position'").fetchone()[0]
     assert stored == 5
     conn.close()
 

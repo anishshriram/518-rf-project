@@ -45,6 +45,29 @@ const nightShading = (set) => ({
   },
 });
 
+/** A dotted line where each event began. */
+const eventMarkers = (set) => ({
+  id: "eventMarkers",
+  afterDatasetsDraw(chart) {
+    const { ctx, chartArea, scales: { x } } = chart;
+    ctx.save();
+    ctx.setLineDash([2, 3]);
+    ctx.strokeStyle = ctx.fillStyle = cssColor("--text-2");
+    for (const event of set.events) {
+      const at = x.getPixelForValue(event.start_ms);
+      if (at < chartArea.left || at > chartArea.right) continue;
+      ctx.beginPath();
+      ctx.moveTo(at, chartArea.top);
+      ctx.lineTo(at, chartArea.bottom);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(at, chartArea.top + 4, 3, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+    ctx.restore();
+  },
+});
+
 const crosshair = {
   id: "crosshair",
   afterDatasetsDraw(chart) {
@@ -71,6 +94,7 @@ export class ChartSet {
   constructor(container) {
     this.timeZone = "UTC";
     this.nights = [];
+    this.events = [];
     this.calibrated = false;
     this.spanMs = 0;
     this.step = 0; // bucket size, 0 for raw points
@@ -109,7 +133,7 @@ export class ChartSet {
     };
     const chart = new Chart(canvas, {
       type: "line",
-      plugins: [nightShading(this), crosshair],
+      plugins: [nightShading(this), eventMarkers(this), crosshair],
       data: {
         datasets: seriesOf(metric).map((series) => ({
           label: series.title,
@@ -152,6 +176,14 @@ export class ChartSet {
             displayColors: false,
             callbacks: {
               title: (items) => (items.length ? formatTime(items[0].raw.x, this.timeZone) : ""),
+              // Titles of events that began near the hovered time.
+              footer: (items) => {
+                if (!items.length) return [];
+                const near = this.spanMs / 100;
+                return this.events
+                  .filter((e) => Math.abs(e.start_ms - items[0].raw.x) <= near)
+                  .map((e) => `◆ ${e.title}`);
+              },
               label: (item) => {
                 const text = `${item.dataset.label}: ${formatNumber(item.raw.y, metric.digits)} ${this.#view(metric).unit()}`;
                 return item.raw.suspect ? `${text} (suspect)` : text;

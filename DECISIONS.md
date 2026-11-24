@@ -126,3 +126,39 @@ Choices made where the spec was ambiguous or the environment differed from it.
   chartjs-plugin-annotation.
 - **Deferred to M6:** detected sunrise and sunset, and daylight and sunshine hours.
   Laundry and open-window advice wait for the M5 alerts.
+
+## M5
+
+- **Rules run once per minute of data time,** so simulated, replayed and delayed
+  data behave like live data. Night light is timed by single readings, but is
+  noticed when its minute ends. `tag_offline` is checked every second.
+- **Offline clock:** the real clock for hardware; for other sources, the newest raw
+  packet of any kind. The limit is at least five normal beacon intervals.
+- **When the tag goes critical offline,** other active events end. An hour without
+  the data a rule needs also ends its event.
+- **Severity** of an active event can rise but not fall.
+- **Event source** is kept in `details_json`, since the table has no such column.
+  The engine's position is kept in the `calibration` table.
+- **Before calibration** the brightest light of the past day stands in for a clear
+  sky, and events that depend on it get low confidence.
+- **`solar_heating`** uses clearness of 0.6 instead of `light_norm` of 0.6: in winter
+  New Jersey `light_norm` never gets that high. It can also fire on a steep clear
+  morning, since warming with the light is all it can see.
+- **`storm_darkening`** compares 5-minute means about 20 min apart, and works from
+  10 degrees of sun. A 15-minute mean cannot drop by 0.5 within 15 min, and the
+  storm scenario at 15:00 in November is below the spec's 15 degrees.
+- **`frost_risk_tonight`:** "mostly clear" means a mean clearness of 0.6 or more over
+  the last 120 daylight minutes.
+- **`heat` bands:** caution is a watch, extreme caution a warning, danger critical.
+- **`sensor_stuck`:** light must change by more than 10 raw units and 5%.
+- **Cooldown** limits emails and browser notifications; the dashboard always shows
+  an alert. Hardware events over an hour old do not notify (backlog).
+- **Emails about simulated or replayed data** are labelled so in the subject.
+  Passwords are only sent over TLS.
+- **Dismiss and test requests** from other web sites are refused.
+- **Simulator:** the default weather is now milder and steadier (mean 12, amplitude
+  2.5, dew point 4, slower clouds, drift of 0.15 C per root hour pulled back over
+  6 h). With the spec's values, "normal" met the frost and darkening rules.
+  `covered` also causes `storm_darkening`, and `storm` causes `fog_dew`.
+- **Deferred:** per-type alert switches and the sound option belong to the settings
+  page, which the milestones do not place. Proposed for M6.

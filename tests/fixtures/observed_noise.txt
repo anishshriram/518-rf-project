@@ -1,0 +1,2 @@
+TS:1795036435411        Drop:0  RX:191  TX:13172869     RSSI:-109.00	BAD CRC	Data: f5  | light: 0 temp: 0.00 humidity: 0
+TS:1795036853059	Drop:0	RX:191	TX:8912822	RSSI:-108.50	BAD CRC	Data: 45 d4 16 d1 1d 9a 16 76 e0 e0 86 97 ae 58 c0 24 6c 8c e5 f0  | light: 212 temp: 584.10 humidity: 7578

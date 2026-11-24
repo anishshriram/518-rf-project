@@ -1,0 +1,18 @@
+# Synthetic session for tests: real startup, noise and summary lines (spec section 4.4),
+# plus one HYPOTHETICAL good line (section 4.6) and invented garbage.
+parameters are ac:3
+server ipl port 0
+Connected to USB Tag Reader.
+New pipsqueak opened.
+Connected to the GRAIL aggregation server.
+TS:1795036435411        Drop:0  RX:191  TX:13172869     RSSI:-109.00	BAD CRC	Data: f5  | light: 0 temp: 0.00 humidity: 0
+#### Received 019 packets in 1795036435 seconds. (0.00% OK) ####
+
+# HYPOTHETICAL good line:
+TS:1795100000000	Drop:0	RX:191	TX:3378	RSSI:-62.50	OK	Data: 0d 32 00 7a 09 c4 17 70 00 00  | light: 140 temp: 21.35 humidity: 45
+@@@ \x00 random garbage ~~~
+TS:not-a-number
+#### not a real summary ####
+TS:1795036853059	Drop:0	RX:191
+TS:1795036853059	Drop:0	RX:191	TX:8912822	RSSI:-108.50	BAD CRC	Data: 45 d4 16 d1 1d 9a 16 76 e0 e0 86 97 ae 58 c0 24 6c 8c e5 f0  | light: 212 temp: 584.10 humidity: 7578
+#### Received 001 packets in 1795036853 seconds. (0.00% OK) ####

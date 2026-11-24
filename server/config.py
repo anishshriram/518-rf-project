@@ -8,10 +8,33 @@ import math
 import os
 import tomllib
 from dataclasses import dataclass, field, fields
+from datetime import date
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 DEFAULT_PATH = "config.toml"
+
+ALERT_TYPES = (
+    "freeze",
+    "frost_risk_tonight",
+    "frost_likely",
+    "fog_dew",
+    "rain_onset",
+    "storm_darkening",
+    "front_passage",
+    "heat",
+    "solar_heating",
+    "sensor_covered",
+    "night_light",
+    "tag_moved",
+    "tag_offline",
+    "battery_trend",
+    "sensor_stuck",
+    "foreign_tags",
+    "open_windows",
+    "window_condensation",
+)
+ALERT_CHANNELS = ("dashboard", "email", "browser")
 
 
 class ConfigError(Exception):
@@ -33,6 +56,7 @@ class TagConfig:
     expected_beacon_interval_s: float = 1.0
     offline_warning_s: float = 30.0
     offline_critical_s: float = 600.0
+    battery_installed: str = ""
 
 
 @dataclass
@@ -98,6 +122,9 @@ class AlertsConfig:
     email_enabled: bool = False
     email_to: str = ""
     browser_notifications: bool = True
+    sound: bool = False
+    # Channels switched off per type, e.g. {"heat": {"email": False}}.
+    types: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -242,6 +269,25 @@ def _check_ranges(c: Config, errors: list[str]) -> None:
         c.collector.server_url.startswith(("http://", "https://")),
         "collector.server_url must start with http:// or https://",
     )
+
+    for kind, channels in c.alerts.types.items():
+        check(kind in ALERT_TYPES, f"alerts.types: unknown alert type {kind}")
+        check(
+            isinstance(channels, dict)
+            and all(k in ALERT_CHANNELS and type(v) is bool for k, v in channels.items()),
+            f"alerts.types.{kind} must map {', '.join(ALERT_CHANNELS)} to true or false",
+        )
+    if c.tag.battery_installed:
+        try:
+            date.fromisoformat(c.tag.battery_installed)
+        except ValueError:
+            errors.append("tag.battery_installed must be a date such as 2026-11-30")
+    check(
+        all(ch.isprintable() for ch in c.alerts.email_to + c.station.name),
+        "alerts.email_to and station.name must not contain control characters",
+    )
+    if c.alerts.email_enabled:
+        check("@" in c.alerts.email_to, "alerts.email_to must be an email address")
 
     for label, value in (
         ("tag.expected_beacon_interval_s", c.tag.expected_beacon_interval_s),

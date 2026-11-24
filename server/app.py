@@ -4,6 +4,7 @@ Run with `python -m server.app`.
 """
 
 import asyncio
+import copy
 import hmac
 import logging
 import sys
@@ -11,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, closing
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -18,8 +20,20 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from server import aggregates, calibration, db, derive, history, notify_email, sun
-from server.alerts import AlertManager, query_events
+from server import (
+    aggregates,
+    calibration,
+    daily,
+    db,
+    derive,
+    export,
+    health,
+    history,
+    notify_email,
+    settings,
+    sun,
+)
+from server.alerts import AlertManager, channel_enabled, query_events
 from server.calibration import Calibrator
 from server.config import Config, ConfigError, load_config
 from server.inference import Engine
@@ -52,17 +66,21 @@ def now_ms() -> int:
 
 def create_app(config: Config) -> FastAPI:
     db_lock = threading.Lock()
+    base_config = copy.deepcopy(config)  # as in the file, without saved settings
     broadcaster = Broadcaster()
     calibrator = Calibrator()
+    started = time.monotonic()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.db = db.connect(config.server.db_path)
+        settings.apply_stored(app.state.db, config)
         broadcaster.start()
         app.state.alerts = make_alerts(app.state.db)
         tasks = [
             asyncio.create_task(calibration_loop()),
             asyncio.create_task(inference_loop()),
+            asyncio.create_task(daily_loop()),
         ]
         yield
         for task in tasks:
@@ -88,7 +106,10 @@ def create_app(config: Config) -> FastAPI:
             result = calibration.calibrate(conn, config, source, ts_ms)
         with db_lock:
             calibration.save(app.state.db, source, result)
-        calibrator.put(source, result)
+            calibrator.put(source, result)
+            if result.calibrated and not before.calibrated:
+                # Earlier days had no sunshine figures yet.
+                forget_daily(source)
         if result.light_k != before.light_k:
             broadcaster.publish_event("calibration", {"calibrated": result.calibrated})
 
@@ -103,22 +124,25 @@ def create_app(config: Config) -> FastAPI:
             await asyncio.sleep(max(5.0, 10 * (time.monotonic() - started)))
 
     def make_alerts(conn) -> AlertManager:
-        sender = None
-        if config.alerts.email_enabled:
+        def latest():
+            with reader() as connection:
+                return db.latest_reading(connection)
+
+        def send(event: dict) -> None:
+            # Checked each time: email can be switched on while running.
+            if not config.alerts.email_enabled:
+                return
             missing = notify_email.missing_settings(config)
             if missing:
-                logger.warning("Alert emails are off; missing: %s", ", ".join(missing))
+                logger.warning("Alert not emailed; missing: %s", ", ".join(missing))
             else:
+                sender.put(event)
 
-                def latest():
-                    with reader() as connection:
-                        return db.latest_reading(connection)
-
-                sender = notify_email.EmailSender(
-                    config, latest, lambda event_id: alerts.mark_emailed(event_id)
-                ).put
+        sender = notify_email.EmailSender(
+            config, latest, lambda event_id: alerts.mark_emailed(event_id)
+        )
         alerts = AlertManager(
-            conn, db_lock, config, broadcaster.publish_event, sender, now_ms
+            conn, db_lock, config, broadcaster.publish_event, send, now_ms
         )
         return alerts
 
@@ -146,6 +170,58 @@ def create_app(config: Config) -> FastAPI:
                 logger.exception("Inference failed")
                 await asyncio.sleep(5)
             await asyncio.sleep(max(1.0, time.monotonic() - started))
+
+    daily_generation = 0
+
+    def forget_daily(source: str, days: set[date] | None = None) -> None:
+        """Drop stored summaries; call with db_lock held."""
+        nonlocal daily_generation
+        daily_generation += 1
+        daily.forget(app.state.db, source, days)
+
+    def store_daily() -> bool:
+        """Summarise one finished day; False if none is left to do."""
+        generation = daily_generation
+        with reader() as conn:
+            latest = db.latest_reading(conn)
+            if latest is None:
+                return False
+            source = latest["source"]
+            today = sun.local_date(config.station, latest["ts_ms"])
+            days = daily.missing_days(conn, config, source, today, 1)
+            if not days:
+                return False
+            light = calibrator.get(conn, source)
+            summary = daily.summarise(
+                conn, config, source, days[0], light, latest["ts_ms"]
+            )
+        with db_lock:
+            # Otherwise its inputs changed meanwhile: compute it again.
+            if summary and generation == daily_generation:
+                daily.store(app.state.db, summary)
+        return True
+
+    async def daily_loop() -> None:
+        while True:
+            more = False
+            try:
+                more = await asyncio.to_thread(store_daily)
+            except Exception:
+                logger.exception("Daily summary failed")
+            await asyncio.sleep(0.2 if more else 10)
+
+    def forget_changed_days(readings: list[dict]) -> None:
+        """Late data changes days that may already be summarised."""
+        if not readings:
+            return
+        days = {sun.local_date(config.station, r["ts_ms"]) for r in readings}
+        source = readings[0]["source"]
+        newest = sun.local_date(config.station, max(r["ts_ms"] for r in readings))
+        if len(days) > 1 or newest != newest_day.get(source):
+            forget_daily(source, days)
+            newest_day[source] = newest
+
+    newest_day: dict[str, date] = {}
 
     def add_light(conn, reading: dict) -> dict:
         """Fill in the values that depend on the light calibration."""
@@ -176,6 +252,7 @@ def create_app(config: Config) -> FastAPI:
         require_token(x_ingest_token)
         with db_lock:
             counts, readings = ingest(app.state.db, config, request)
+            forget_changed_days(readings)
             # Inside the lock, so clients see readings in id order.
             broadcaster.publish_readings(
                 [add_light(app.state.db, reading) for reading in readings]
@@ -222,6 +299,112 @@ def create_app(config: Config) -> FastAPI:
                 calibration=calibrator.get(conn, source),
             )
 
+    @app.get("/api/daily", summary="Summaries per local day, oldest first")
+    def get_daily(
+        from_: Annotated[date | None, Query(alias="from")] = None,
+        to: date | None = None,
+    ) -> list[dict]:
+        with reader() as conn:
+            today, rows = daily_rows(conn, from_, to)
+            return rows
+
+    @app.get("/api/daily/totals", summary="Degree days for the month and season")
+    def get_totals() -> dict:
+        with reader() as conn:
+            today, rows = daily_rows(conn, None, None, days=400)
+            return daily.totals(rows, today)
+
+    def daily_rows(conn, first: date | None, last: date | None, days: int = 30):
+        """Stored summaries plus the unfinished day, for the current source."""
+        latest = db.latest_reading(conn)
+        if latest is None:
+            return sun.local_date(config.station, now_ms()), []
+        source = latest["source"]
+        today = sun.local_date(config.station, latest["ts_ms"])
+        last = last or today
+        first = first or max(last, date(1971, 1, 1)) - timedelta(days=days - 1)
+        rows = [
+            {**row, "in_progress": False}
+            for row in daily.load(conn, source, first, min(last, today))
+            if row["local_date"] != today.isoformat()
+        ]
+        if first <= today <= last:
+            light = calibrator.get(conn, source)
+            row = daily.summarise(conn, config, source, today, light, latest["ts_ms"])
+            if row:
+                rows.append({**row, "in_progress": True})
+        return today, rows
+
+    @app.get("/api/health", summary="Tag, receiver, collector and server health")
+    def get_health() -> dict:
+        with reader() as conn:
+            latest = db.latest_reading(conn)
+            return {
+                "tag": health.tag_health(conn, config, latest, now_ms()),
+                "receiver": health.receiver_health(conn),
+                "collector": health.collector_health(conn),
+                "server": {
+                    "uptime_s": round(time.monotonic() - started),
+                    "db_size_mb": round(db.size_mb(config.server.db_path), 2),
+                    "version": app.version,
+                },
+            }
+
+    @app.get(
+        "/api/export.csv",
+        summary="Download readings as CSV",
+        response_class=StreamingResponse,
+        responses={200: {"content": {"text/csv": {}}}},
+    )
+    def get_export(
+        from_: Annotated[int | None, Query(alias="from", ge=0, lt=2**53)] = None,
+        to: Annotated[int | None, Query(ge=0, lt=2**53)] = None,
+        resolution: Resolution = "auto",
+    ) -> StreamingResponse:
+        conn = db.open_reader(config.server.db_path)
+        try:
+            latest = db.latest_reading(conn)
+            source = latest["source"] if latest else "hardware"
+            end = to if to is not None else (latest["ts_ms"] if latest else now_ms())
+            start = from_ if from_ is not None else max(0, end - history.DAY)
+            if start > end:
+                raise HTTPException(422, "'from' must not be after 'to'")
+            light = calibrator.get(conn, source)
+        except BaseException:
+            conn.close()
+            raise
+        name = f"pip-weather-{source}-{sun.local_date(config.station, end)}.csv"
+        return StreamingResponse(
+            export.stream(conn, config, light, source, start, end, resolution),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    @app.get("/api/settings", summary="Editable settings, with defaults")
+    def get_settings() -> dict:
+        return settings.describe(base_config, config)
+
+    @app.put(
+        "/api/settings",
+        summary="Change some settings; null restores a default",
+        dependencies=[Depends(same_site)],
+    )
+    def put_settings(changes: dict[str, dict]) -> dict:
+        with db_lock:
+            try:
+                changed = settings.update(
+                    app.state.db, base_config, config, changes, now_ms()
+                )
+            except ConfigError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if any(key.startswith(("station.", "thresholds.")) for key in changed):
+                # Recomputed with the new values.
+                for source in ("hardware", "simulator", "replay"):
+                    forget_daily(source)
+        if changed:
+            broadcaster.publish_event("settings", {"changed": sorted(changed)})
+        return settings.describe(base_config, config)
+
     @app.get("/api/events", summary="Inferences and alerts, newest first")
     def get_events(
         from_: Annotated[int | None, Query(alias="from", ge=0, lt=2**53)] = None,
@@ -233,7 +416,10 @@ def create_app(config: Config) -> FastAPI:
         with reader() as conn:
             latest = db.latest_reading(conn)
             source = latest["source"] if latest else "hardware"
-            return query_events(conn, source, from_, to, active, type_, limit)
+            events = query_events(conn, source, from_, to, active, type_, limit)
+        for event in events:
+            event["banner"] = channel_enabled(config, event["type"], "dashboard")
+        return events
 
     @app.post(
         "/api/events/{event_id}/ack",
@@ -313,17 +499,7 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
     """Build the GET /api/current response."""
     latest = db.latest_reading(conn)
     tag = config.tag
-    age_s = None
-    status = "never_seen"
-    if latest:
-        # Simulated and replayed timestamps say nothing about freshness.
-        seen = latest["ts_ms" if latest["source"] == "hardware" else "received_ms"]
-        age_s = max(0.0, (now - seen) / 1000)
-        status = "online"
-        if age_s >= tag.offline_critical_s:
-            status = "offline_critical"
-        elif age_s >= tag.offline_warning_s:
-            status = "offline_warning"
+    status = health.tag_status(conn, config, latest, now)
     light = calibrator.get(conn, latest["source"]) if latest else None
     active = (
         {e["type"] for e in query_events(conn, latest["source"], active=True)}
@@ -344,15 +520,16 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
     value: Callable = (latest or {}).get
     return {
         "station": {"name": config.station.name, "timezone": config.station.timezone},
+        "display_temperature": config.units.display_temperature,
         "mode": value("source"),
         "server_ms": now,
         "last_reading_ms": value("ts_ms"),
-        "age_s": age_s,
-        "status": status,
+        "age_s": status["age_s"],
+        "status": status["status"],
         "tag": {
             "allowed_tx_ids": tag.allowed_tx_ids,
-            "offline_warning_s": tag.offline_warning_s,
-            "offline_critical_s": tag.offline_critical_s,
+            "offline_warning_s": status["offline_warning_s"],
+            "offline_critical_s": status["offline_critical_s"],
         },
         "bad_crc_1h": db.bad_crc_since(conn, now - history.HOUR),
         **{name: value(name) for name in CURRENT_VALUES},
@@ -366,6 +543,7 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
             "solar_heating": "solar_heating" in active,
         },
         "browser_notifications": config.alerts.browser_notifications,
+        "sound": config.alerts.sound,
         "recommendations": {
             "open_windows": "open_windows" in active if latest else None,
             "laundry_score": laundry(conditions, latest, "rain_onset" in active)

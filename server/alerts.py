@@ -62,6 +62,10 @@ def query_events(
     return [to_dict(row) for row in rows]
 
 
+def channel_enabled(config: Config, kind: str, channel: str) -> bool:
+    return config.alerts.types.get(kind, {}).get(channel, True)
+
+
 class AlertManager:
     """Opens, escalates and closes events, and tells the world about them.
 
@@ -191,8 +195,14 @@ class AlertManager:
     def _announce(self, event: dict, now: int, escalated: bool = False) -> None:
         name = "alert" if is_alert(event) else "inference"
         notify = is_alert(event) and self._may_notify(event, now, escalated)
-        self._publish(name, {**event, "notify": notify})
-        if notify and self._send_email:
+        kind = event["type"]
+        browser = notify and channel_enabled(self._config, kind, "browser")
+        self._publish(name, {**event, "notify": browser})
+        if (
+            notify
+            and self._send_email
+            and channel_enabled(self._config, kind, "email")
+        ):
             self._send_email(dict(event))
 
     def _may_notify(self, event: dict, now: int, escalated: bool) -> bool:

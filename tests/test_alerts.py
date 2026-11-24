@@ -282,3 +282,19 @@ def test_password_does_not_leak(config, smtp, monkeypatch):
     with TestClient(create_app(config)) as client:
         texts = [client.get("/api/current").text, client.post("/api/alerts/test").text]
     assert "sekrit" not in json.dumps(texts)
+
+
+def test_channels_per_type(made, config):
+    config.alerts.types = {"freeze": {"email": False, "browser": False}}
+    made.manager.open("simulator", "freeze", result(), T0, T0)
+    made.manager.open("simulator", "heat", result(), T0, T0)
+    assert [e["type"] for e in made.emails] == ["heat"]
+    assert [d["notify"] for _, d in made.published] == [False, True]
+
+
+def test_banner_switch(config, smtp):
+    config.alerts.types = {"freeze": {"dashboard": False}}
+    with TestClient(create_app(config)) as client:
+        send(client, 20, -5)
+        (event,) = wait_for(lambda: client.get("/api/events?type=freeze").json())
+        assert event["banner"] is False

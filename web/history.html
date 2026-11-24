@@ -1,3 +1,55 @@
 <!DOCTYPE html>
-<!-- Placeholder: the dashboard starts in milestone M2. -->
-<title>PIP Weather</title>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PIP Weather — History</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header>
+    <h1>PIP Weather <span id="station"></span></h1>
+    <span id="mode" class="badge" hidden></span>
+    <a class="status" href="./">Live dashboard</a>
+    <button id="unit" type="button" aria-label="Switch temperature unit">°C</button>
+  </header>
+  <div id="unreachable" class="banner critical" role="alert" hidden>✕ Server not reachable</div>
+  <main>
+    <nav id="ranges" class="windows" aria-label="Number of days"></nav>
+    <section class="chart">
+      <h2 id="chart-title"></h2>
+      <div class="plot"><canvas id="range-chart" role="img" aria-label="Daily temperature range"></canvas></div>
+    </section>
+    <section class="chart timeline">
+      <h2>Degree days</h2>
+      <div class="scroll"><table id="totals"></table></div>
+      <p class="note">HDD is proportional to heating energy demand, CDD to cooling demand. GDD tracks plant growth. Days with gaps count only the measured part.</p>
+    </section>
+    <section class="chart timeline">
+      <h2>Daily summaries</h2>
+      <div class="scroll"><table id="days"></table></div>
+      <p class="note">Sunshine and sky are estimates from the light sensor, and need a calibrated sensor.</p>
+    </section>
+    <section class="chart timeline">
+      <h2>Export readings as CSV</h2>
+      <form id="export" class="timeline-head">
+        <label>From <input type="date" name="from" required></label>
+        <label>To <input type="date" name="to" required></label>
+        <label>Resolution
+          <select name="resolution">
+            <option value="1m">1 minute</option>
+            <option value="15m">15 minutes</option>
+            <option value="1h">1 hour</option>
+            <option value="raw">Every reading</option>
+          </select>
+        </label>
+        <button type="submit">Download</button>
+      </form>
+      <p class="note">Dates are in the time zone of this computer.</p>
+    </section>
+  </main>
+  <script src="vendor/chart.umd.js"></script>
+  <script type="module" src="js/history.js"></script>
+</body>
+</html>

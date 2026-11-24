@@ -15,6 +15,25 @@ function element(tag, className, text) {
 
 const isAlert = (event) => event.severity !== "info";
 
+/** Two short tones. Browsers allow sound only after a click on the page. */
+function chime() {
+  try {
+    const audio = new AudioContext();
+    [880, 660].forEach((pitch, i) => {
+      const tone = audio.createOscillator();
+      const volume = audio.createGain();
+      volume.gain.value = 0.15;
+      tone.frequency.value = pitch;
+      tone.connect(volume).connect(audio.destination);
+      tone.start(audio.currentTime + i * 0.25);
+      tone.stop(audio.currentTime + i * 0.25 + 0.2);
+    });
+    setTimeout(() => audio.close(), 1000);
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
 export class Alerts {
   constructor(banners, timeline) {
     this.banners = banners;
@@ -37,7 +56,7 @@ export class Alerts {
   }
 
   render() {
-    const active = this.events.filter((e) => isAlert(e) && e.end_ms === null && !e.acknowledged
+    const active = this.events.filter((e) => isAlert(e) && e.banner !== false && e.end_ms === null && !e.acknowledged
       && !(e.type === "tag_offline" && this.offlineShown));
     this.banners.replaceChildren(...(this.test ? [this.test, ...active] : active).map((e) => this.#banner(e)));
     this.timeline.replaceChildren(...this.events.slice(0, TIMELINE_ROWS).map((e) => this.#entry(e)));
@@ -86,7 +105,8 @@ export class Alerts {
   }
 
   /** A live alert from the stream; the event list is refreshed separately. */
-  onAlert(event, browserNotifications) {
+  onAlert(event, browserNotifications, sound) {
+    if (sound && (event.severity === "critical" || event.type === "test")) chime();
     if (event.type === "test") {
       this.test = event;
       this.render();

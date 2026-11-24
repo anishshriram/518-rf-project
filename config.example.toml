@@ -10,6 +10,7 @@ allowed_tx_ids = [3378]       # REPLACE with the number on your tag's sticker. E
 expected_beacon_interval_s = 1.0   # overwritten by measured median once data flows
 offline_warning_s = 30
 offline_critical_s = 600
+battery_installed = ""        # e.g. "2026-11-30", shown as battery age
 
 [units]
 display_temperature = "C"     # "C" or "F" (frontend can toggle per user)
@@ -62,6 +63,7 @@ email_enabled = false
 email_to = ""
 # SMTP creds via env: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
 browser_notifications = true
+sound = false                 # chime on critical alerts while the dashboard is open
 
 [server]
 host = "127.0.0.1"            # use 0.0.0.0 to view from phone on same Wi-Fi

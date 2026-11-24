@@ -3,7 +3,8 @@
 import { Alerts } from "./alerts.js";
 import { Cards } from "./cards.js";
 import { ChartSet, HISTORY_KEYS } from "./charts.js";
-import { formatAge, formatTime, tempUnit, toggleUnit } from "./units.js";
+import { renderDays, renderHealth } from "./daily.js";
+import { formatAge, formatTime, modeBadge, setDefaultUnit, tempUnit, toggleUnit } from "./units.js";
 
 const $ = (id) => document.getElementById(id);
 const MINUTE = 60000, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
@@ -47,15 +48,13 @@ function applyCurrent(data) {
   clockOffset = data.server_ms - Date.now();
   if (data.age_s !== null) lastSeen = data.server_ms - data.age_s * 1000;
   cards.conditions = data;
+  if (setDefaultUnit(data.display_temperature)) showUnit();
   charts.timeZone = cards.timeZone = alerts.timeZone = data.station.timezone;
   $("station").textContent = `— ${data.station.name}`;
   renderAdvice(data);
   $("enable-notifications").hidden = !data.browser_notifications
     || !("Notification" in window) || Notification.permission !== "default";
-  const badge = $("mode");
-  badge.hidden = data.mode === null;
-  badge.className = `badge ${data.mode ?? ""}`;
-  badge.textContent = { simulator: "⚠ SIMULATED DATA", replay: "↻ REPLAYED DATA" }[data.mode] ?? "● LIVE (hardware)";
+  modeBadge($("mode"), data.mode);
 }
 
 function renderAdvice({ recommendations: r }) {
@@ -81,6 +80,18 @@ async function loadEvents() {
     alerts.setEvents(events);
     charts.events = events;
     charts.draw(windowEnd());
+  } catch (error) {
+    console.warn(error);
+  }
+}
+
+let days = [];
+async function loadPanels() {
+  try {
+    const [health, recent] = await Promise.all([getJson("api/health"), getJson("api/daily")]);
+    renderHealth($("health"), health, charts.timeZone);
+    days = recent.slice(-7);
+    renderDays($("days"), days, charts.timeZone, false);
   } catch (error) {
     console.warn(error);
   }
@@ -120,6 +131,7 @@ async function load() {
     cards.render();
     renderState();
     loadEvents();
+    loadPanels();
   } catch (error) {
     console.warn(error);
     if (token === loads) scheduleLoad(3000);
@@ -190,10 +202,11 @@ function connect() {
   });
   source.addEventListener("reading", (event) => onReading(JSON.parse(event.data)));
   source.addEventListener("alert", (event) => {
-    alerts.onAlert(JSON.parse(event.data), current?.browser_notifications);
+    alerts.onAlert(JSON.parse(event.data), current?.browser_notifications, current?.sound);
     scheduleEvents();
   });
   for (const name of ["alert_cleared", "inference"]) source.addEventListener(name, scheduleEvents);
+  source.addEventListener("settings", () => load());
   source.addEventListener("calibration", () => load()); // the light scale changed
   source.addEventListener("error", () => {
     connected = false;
@@ -222,15 +235,19 @@ $("enable-notifications").addEventListener("click", async () => {
 });
 $("test-alert").addEventListener("click", () => fetch("api/alerts/test", { method: "POST" }).catch(() => {}));
 
-const showUnit = () => { $("unit").textContent = tempUnit(); };
+$("unit").textContent = tempUnit();
+
+function showUnit() {
+  $("unit").textContent = tempUnit();
+  charts.changeUnit();
+  renderDays($("days"), days, charts.timeZone, false);
+  cards.render();
+}
 $("unit").addEventListener("click", () => {
   toggleUnit();
   showUnit();
-  charts.changeUnit();
   charts.drawNow();
-  cards.render();
 });
-showUnit();
 
 setInterval(() => {
   renderState();
@@ -242,6 +259,7 @@ setInterval(() => {
 setInterval(() => { if (span >= DAY && connected) load(); }, MINUTE);
 setInterval(async () => {
   if (!connected || loading) return;
+  loadPanels();
   try {
     const data = await getJson("api/current");
     // A changed source is handled by load(), which also replaces the charts.

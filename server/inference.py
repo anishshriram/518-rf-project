@@ -12,7 +12,7 @@ from datetime import datetime
 from statistics import fmean, median
 from zoneinfo import ZoneInfo
 
-from server import aggregates, calibration, derive, sun
+from server import aggregates, calibration, derive, health, sun
 from server.alerts import AlertManager
 from server.calibration import Calibration, percentile
 from server.config import Config
@@ -797,13 +797,7 @@ class Engine:
     def _check_offline(self, conn, now_ms: int) -> None:
         """Silence from the tag, judged by the clock the data runs on."""
         last = self.last_good["ts_ms"]
-        now = now_ms
-        if self.source != "hardware":
-            # Other packets still show how far simulated time has come.
-            now = conn.execute(
-                "SELECT ts_ms FROM raw_packets WHERE source = ? ORDER BY id DESC LIMIT 1",
-                (self.source,),
-            ).fetchone()[0]
+        now = health.data_clock(conn, self.source, now_ms)
         silence = (now - last) / 1000
         recent = self.state.window(10)
         spacing = 60 * len(recent) / sum(r["n"] for r in recent) if recent else 0

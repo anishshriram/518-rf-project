@@ -5,7 +5,7 @@ from pathlib import Path
 
 from server import derive
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
@@ -20,6 +20,7 @@ def connect(path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    _migrate(conn)
     conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
     row = conn.execute("SELECT version FROM schema_version").fetchone()
     if row is None:
@@ -31,6 +32,19 @@ def connect(path: str) -> sqlite3.Connection:
             f"database schema version {row['version']} is not {SCHEMA_VERSION}"
         )
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an older database up to the current schema."""
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
+    if "schema_version" not in tables:
+        return
+    row = conn.execute("SELECT version FROM schema_version").fetchone()
+    if row and row["version"] == 1:
+        # Version 1 never filled daily_summary; version 2 adds its source.
+        with conn:
+            conn.execute("DROP TABLE IF EXISTS daily_summary")
+            conn.execute("UPDATE schema_version SET version = 2")
 
 
 def _insert(conn: sqlite3.Connection, table: str, values: dict) -> int:
@@ -128,3 +142,9 @@ def open_reader(path: str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=ON")
     return conn
+
+
+def size_mb(path: str) -> float:
+    """Size of the database on disk, including its write-ahead log."""
+    files = [Path(path), Path(f"{path}-wal")]
+    return sum(f.stat().st_size for f in files if f.exists()) / 1e6

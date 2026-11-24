@@ -1,3 +1,28 @@
 <!DOCTYPE html>
-<!-- Placeholder: the dashboard starts in milestone M2. -->
-<title>PIP Weather</title>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PIP Weather — Settings</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header>
+    <h1>PIP Weather <span>— Settings</span></h1>
+    <span id="mode" class="badge" hidden></span>
+    <a class="status" href="./">Live dashboard</a>
+    <a href="history.html">History</a>
+  </header>
+  <div id="message" class="banner info" role="status" hidden></div>
+  <div id="simulated" class="banner warning" hidden>⚠ These settings belong to the simulator's database, which is replaced on every run.</div>
+  <form id="form" novalidate>
+    <div id="sections"></div>
+    <div class="save-bar">
+      <button type="submit">Save changes</button>
+      <button id="test-alert" type="button">Send test alert</button>
+    </div>
+  </form>
+  <script type="module" src="js/settings.js"></script>
+</body>
+</html>

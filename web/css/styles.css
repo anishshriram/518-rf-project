@@ -96,3 +96,20 @@ th:first-child, td:first-child { text-align: left; }
 .timeline li.critical { border-color: #d03b3b; }
 .timeline li.warning { border-color: #fab219; }
 .timeline li.watch { border-color: #2a78d6; }
+a { color: inherit; }
+.panels { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; margin-top: 12px; }
+.scroll { overflow-x: auto; }
+.scroll th, .scroll td { white-space: nowrap; }
+.scroll td.notes { white-space: normal; min-width: 220px; text-align: left; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 8px 0 0; font-size: 0.92rem; }
+dt { color: var(--text-2); }
+dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
+input, select { font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--text-2); border-radius: 6px; padding: 4px 8px; }
+@media (max-width: 1023px) { .panels { grid-template-columns: minmax(0, 1fr); } }
+.settings { margin-bottom: 12px; }
+.settings summary { font-weight: 600; cursor: pointer; }
+.fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 20px; margin: 8px 0 12px; }
+.fields label { display: flex; flex-direction: column; gap: 2px; font-size: 0.92rem; }
+.fields input:not([type="checkbox"]), .fields select { width: 100%; }
+.fields input[type="checkbox"] { align-self: flex-start; width: 20px; height: 20px; }
+.save-bar { position: sticky; bottom: 0; display: flex; gap: 8px; padding: 12px 0; background: var(--page); }

@@ -8,7 +8,7 @@ import sqlite3
 import sys
 
 from collector.parser import Packet, parse_line
-from server import db
+from server import db, settings
 from server.config import Config, ConfigError, load_config
 from server.ingest import PacketIn, store_reading
 
@@ -28,6 +28,7 @@ def rebuild(conn: sqlite3.Connection, config: Config) -> int:
         conn.execute(
             "DELETE FROM readings WHERE raw_id IN (SELECT id FROM raw_packets)"
         )
+        conn.execute("DELETE FROM daily_summary")  # recomputed by the server
         count = 0
         # Arrival order, as at ingest. Fetched up front: rows change on the way.
         for row in conn.execute("SELECT * FROM raw_packets ORDER BY id").fetchall():
@@ -73,6 +74,7 @@ def main() -> int:
         return 2
     conn = db.connect(config.server.db_path)
     try:
+        settings.apply_stored(conn, config)
         print(f"{rebuild(conn, config)} readings rebuilt in {config.server.db_path}")
     finally:
         conn.close()

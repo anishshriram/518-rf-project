@@ -1,7 +1,7 @@
 # PIP Tag Outdoor Weather Station
 
 Outdoor weather station and real-time dashboard built on a PIP RF sensor tag
-and USB receiver. So far (milestone M5) packets are simulated or received,
+and USB receiver. So far (milestone M6) packets are simulated or received,
 collected, sent to the server, stored in SQLite and shown on a live dashboard.
 
 ## Setup
@@ -26,6 +26,9 @@ http://127.0.0.1:8000/docs.
 
 Real data is stored in `data/weather.db`. The simulator uses
 `data/simulator.db`, which is replaced on every run.
+
+Most settings can be changed on the dashboard's settings page. They are stored
+in the database and override `config.toml`.
 
 After changing units, offsets or the tag list, recompute stored readings with
 `python -m server.rebuild`.

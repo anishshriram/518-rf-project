@@ -72,7 +72,8 @@ CREATE TABLE IF NOT EXISTS agg_hour (  -- same columns as agg_minute, keyed by h
 
 -- Local-calendar-day summaries (station timezone).
 CREATE TABLE IF NOT EXISTS daily_summary (
-  local_date        TEXT PRIMARY KEY,   -- 'YYYY-MM-DD'
+  source            TEXT NOT NULL,
+  local_date        TEXT NOT NULL,      -- 'YYYY-MM-DD'
   temp_min_c REAL, temp_min_time_ms INTEGER,
   temp_max_c REAL, temp_max_time_ms INTEGER,
   temp_avg_c REAL,
@@ -88,7 +89,8 @@ CREATE TABLE IF NOT EXISTS daily_summary (
   sky_summary TEXT,                     -- 'mostly clear' | 'partly cloudy' | 'mostly cloudy' | 'overcast'
   packet_success_pct REAL,
   data_coverage_pct REAL,               -- fraction of the day with data
-  notes TEXT                            -- e.g. "front passed 14:20"
+  notes TEXT,                           -- e.g. "front passed 14:20"
+  PRIMARY KEY (source, local_date)
 );
 
 CREATE TABLE IF NOT EXISTS events (      -- inferences and alerts

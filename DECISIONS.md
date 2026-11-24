@@ -162,3 +162,49 @@ Choices made where the spec was ambiguous or the environment differed from it.
   `covered` also causes `storm_darkening`, and `storm` causes `fog_dew`.
 - **Deferred:** per-type alert switches and the sound option belong to the settings
   page, which the milestones do not place. Proposed for M6.
+
+## M6
+
+- **`daily_summary` has a `source` column** in its key, so simulated and real days
+  stay apart. Older databases are upgraded on start (schema version 2); the table
+  was empty until now.
+- **Minute and hour rollup tables stay unused.** Summaries are computed from
+  readings, and a finished day is stored once. Late data, a rebuild or a first
+  calibration makes stored days be computed again.
+- **Raw retention is not implemented.** Readings find their source through
+  `raw_packets`, so deleting raw rows would hide old readings. At 15 to 25 MB a day
+  this does not matter within the project; `raw_retention_days` has no effect.
+- **Sunshine figures** use the calibration in force when the day is summarised, and
+  are empty before the first calibration.
+- **Detected sunrise and sunset** ignore full night (lamps) and need the opposite
+  state to have been seen first. The 5% threshold alone gives about 40 min after
+  sunrise in November.
+- **Daily sky:** mean clearness of 0.75 is mostly clear, 0.55 partly cloudy, 0.35
+  mostly cloudy (the spec gives names only).
+- **Degree days** cover the measured minutes, as in the spec's formula. Heating
+  seasons start on 1 July, cooling and growing seasons on 1 January.
+- **Packet success** compares packets with the measured beacon interval. The hourly
+  figure counts silence up to now.
+- **Offline status** in `/api/current` and `/api/health` now uses the same clock as
+  the `tag_offline` alert.
+- **Extra endpoint:** `GET /api/daily/totals`.
+- **CSV:** raw exports include rejected readings with their reason.
+
+## Settings page
+
+- **No milestone lists it,** so it was built with M6.
+- **Storage:** overrides are kept in the database in use and win over
+  `config.toml`. Returning to the default removes the override. The simulator's
+  settings vanish with its database; the page says so.
+- **Not editable:** the `[server]` and `[collector]` sections, including the token.
+- **A request is all or nothing:** one invalid value rejects it. Saved settings that
+  are no longer valid are ignored with a warning.
+- **Units, offsets and tag IDs** apply to new readings; `server.rebuild` (which also
+  reads the saved settings) applies them to stored ones.
+- **Changed station or thresholds** make daily summaries be computed again.
+- **Per-type switches** only silence a channel; the event is always recorded.
+- **Additions to the config:** `tag.battery_installed` (battery age in the health
+  panel, section 25), `alerts.sound` and `alerts.types`.
+- **`display_temperature`** is the default; a viewer's own choice wins.
+- **No login:** on a shared network anyone who can open the page can change
+  settings, so the server stays on 127.0.0.1 by default.

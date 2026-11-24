@@ -1,11 +1,11 @@
 // History page: daily summaries, degree-day totals and CSV export.
 
-import { element, renderDays } from "./daily.js";
-import { convertTemp, formatNumber, modeBadge, setDefaultUnit, tempUnit, toggleUnit } from "./units.js";
+import { renderDays, renderGlossary } from "./daily.js";
+import { $, element, getJson, segmented, setText, showSource } from "./dom.js";
+import { chooseUnit, convertTemp, formatDay, formatNumber, setDefaultUnit, tempUnit } from "./units.js";
 
 /* global Chart */
 
-const $ = (id) => document.getElementById(id);
 const DAY = 86400000;
 const RANGES = [["7 days", 7], ["30 days", 30], ["90 days", 90], ["1 year", 365]];
 let range = 30;
@@ -14,12 +14,6 @@ let chart = null;
 let loads = 0;
 
 const cssColor = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-
-async function getJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  return response.json();
-}
 
 /** The date `days` before a YYYY-MM-DD date. */
 function daysBefore(date, days) {
@@ -50,10 +44,11 @@ async function load() {
 
 function render() {
   const { current, days, totals } = state;
-  $("station").textContent = `— ${current.station.name}`;
-  modeBadge($("mode"), current.mode);
-  $("unit").textContent = tempUnit();
-  renderDays($("days"), days, current.station.timezone, true);
+  setText($("station"), current.station.name);
+  showSource(current.mode);
+  for (const button of $("units").children) button.setAttribute("aria-pressed", String(button.textContent === tempUnit()));
+  renderDays($("days"), days, current.station.timezone);
+  renderGlossary($("glossary"));
   renderTotals(totals);
   renderChart(days);
   const form = $("export").elements;
@@ -64,11 +59,7 @@ function render() {
 }
 
 function renderTotals({ month, season }) {
-  const row = (tag, cells) => {
-    const node = element("tr");
-    node.append(...cells.map((text) => element(tag, "", text)));
-    return node;
-  };
+  const row = (tag, cells) => element("tr", "", ...cells.map((text) => element(tag, "", text)));
   const f = (v) => formatNumber(v, 1);
   $("totals").replaceChildren(
     row("th", ["Period", "HDD", "CDD", "GDD"]),
@@ -79,17 +70,17 @@ function renderTotals({ month, season }) {
 }
 
 function renderChart(days) {
-  $("chart-title").textContent = `Daily temperature range (${tempUnit()})`;
+  setText($("chart-unit"), tempUnit());
   const ticks = { color: cssColor("--text-2") };
   chart?.destroy();
   chart = new Chart($("range-chart"), {
     type: "bar",
     data: {
-      labels: days.map((d) => d.local_date),
+      labels: days.map((d) => formatDay(d.local_date)),
       datasets: [{
         data: days.map((d) => [convertTemp(d.temp_min_c), convertTemp(d.temp_max_c)]),
         backgroundColor: cssColor("--temp"),
-        borderRadius: 4,
+        borderRadius: 3,
         borderSkipped: false,
         maxBarThickness: 24,
       }],
@@ -109,26 +100,19 @@ function renderChart(days) {
       },
       scales: {
         x: { grid: { display: false }, ticks: { ...ticks, maxRotation: 0, autoSkipPadding: 16 } },
-        y: { beginAtZero: false, grid: { color: cssColor("--grid") }, border: { display: false }, ticks },
+        y: { beginAtZero: false, grid: { color: cssColor("--line") }, border: { display: false }, ticks },
       },
     },
   });
 }
 
-for (const [label, days] of RANGES) {
-  const button = element("button", "", label);
-  button.type = "button";
-  button.setAttribute("aria-pressed", String(days === range));
-  button.addEventListener("click", () => {
-    range = days;
-    for (const other of $("ranges").children) other.setAttribute("aria-pressed", String(other === button));
-    load();
-  });
-  $("ranges").append(button);
-}
+segmented($("ranges"), RANGES, range, (days) => {
+  range = days;
+  load();
+});
 
-$("unit").addEventListener("click", () => {
-  toggleUnit();
+segmented($("units"), [["°C", "C"], ["°F", "F"]], tempUnit().slice(1), (unit) => {
+  chooseUnit(unit);
   if (state) render();
 });
 

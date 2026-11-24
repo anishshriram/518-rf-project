@@ -208,3 +208,19 @@ Choices made where the spec was ambiguous or the environment differed from it.
 - **`display_temperature`** is the default; a viewer's own choice wins.
 - **No login:** on a shared network anyone who can open the page can change
   settings, so the server stays on 127.0.0.1 by default.
+
+## Redesign
+
+- **Frontend only,** plus additive fields in `/api/current`: `change_1h`, `home`,
+  `smoothing_alpha` and the station's coordinates.
+- **Location** is shown as coordinates; a place name would need an online service.
+- **Default range is 6 h** and the chosen range and smoothing are remembered. The
+  15 min range is still the per-reading live view.
+- **Alerts:** one banner for the most important alert, a short list for the rest.
+  "Why it matters" and "what to do" are fixed text per type. Acknowledging hides the
+  banner but the alert stays listed until it resolves.
+- **Chart annotations:** at most six, alerts and fronts only, on the temperature chart.
+- **Minimum to maximum band** on temperature and humidity where points are averages.
+- **The test alert** button is only on the settings page now.
+- **Icons** are a small inline set; emoji are gone. Event times show in text, so
+  nothing depends on hovering.

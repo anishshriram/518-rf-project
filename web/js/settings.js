@@ -1,9 +1,7 @@
 // Settings page: builds a form from /api/settings and saves what changed.
 
-import { element } from "./daily.js";
-import { modeBadge } from "./units.js";
+import { $, element, setText, showSource } from "./dom.js";
 
-const $ = (id) => document.getElementById(id);
 const CHANNELS = ["dashboard", "email", "browser"];
 const WINDOWS = [["Single glazing", 5.8], ["Double glazing", 2.8], ["Triple glazing", 1.0]];
 const TITLES = {
@@ -59,7 +57,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 function show(text, kind) {
   $("message").textContent = text;
-  $("message").className = `banner ${kind}`;
+  $("message").className = `message ${kind === "critical" ? "bad" : ""}`;
   $("message").hidden = false;
   $("message").scrollIntoView({ block: "nearest" });
 }
@@ -176,14 +174,14 @@ function locationButton() {
   const button = element("button", "", "Use my location");
   button.type = "button";
   button.addEventListener("click", () => {
-    if (!navigator.geolocation) return show("✕ This browser cannot give a location.", "critical");
+    if (!navigator.geolocation) return show("This browser cannot give a location.", "critical");
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
         inputs.get("station.latitude").write(Number(coords.latitude.toFixed(4)));
         inputs.get("station.longitude").write(Number(coords.longitude.toFixed(4)));
         show("Location filled in. Save to apply it.", "info");
       },
-      (error) => show(`✕ No location: ${error.message}`, "critical"),
+      (error) => show(`No location: ${error.message}`, "critical"),
     );
     return undefined;
   });
@@ -204,7 +202,7 @@ function build() {
   inputs = new Map();
   $("sections").replaceChildren(...ORDER.map((section) => {
     const advanced = ADVANCED.includes(section);
-    const box = element(advanced ? "details" : "section", "chart settings");
+    const box = element(advanced ? "details" : "section");
     box.append(element(advanced ? "summary" : "h2", "", TITLES[section]));
     if (NOTES[section]) box.append(element("p", "note", NOTES[section]));
     const grid = element("div", "fields");
@@ -229,8 +227,10 @@ function build() {
       scroll.append(table.node);
       box.append(scroll);
     }
-    if (section === "station") box.append(locationButton(), " ");
-    box.append(resetButton(section));
+    const actions = element("div", "actions");
+    if (section === "station") actions.append(locationButton());
+    actions.append(resetButton(section));
+    box.append(actions);
     return box;
   }));
 }
@@ -247,9 +247,9 @@ async function put(changes, done) {
     if (!response.ok) throw new Error(typeof reply.detail === "string" ? reply.detail : "the values were not accepted");
     data = reply;
     build();
-    show(`✓ ${done}`, "info");
+    show(`${done}`, "info");
   } catch (error) {
-    show(`✕ Not saved: ${error.message}`, "critical");
+    show(`Not saved: ${error.message}`, "critical");
   }
 }
 
@@ -262,7 +262,7 @@ $("form").addEventListener("submit", (event) => {
     try {
       value = item.read();
     } catch (error) {
-      show(`✕ ${TITLES[section]}, ${label(path, key)}: ${error.message}`, "critical");
+      show(`${TITLES[section]}, ${label(path, key)}: ${error.message}`, "critical");
       item.node.focus?.();
       return;
     }
@@ -280,7 +280,7 @@ $("test-alert").addEventListener("click", async () => {
     const reply = await (await fetch("api/alerts/test", { method: "POST" })).json();
     show(`Test alert — dashboard: ${reply.dashboard}, browser: ${reply.browser}, email: ${reply.email}`, "info");
   } catch (error) {
-    show(`✕ ${error.message}`, "critical");
+    show(`${error.message}`, "critical");
   }
 });
 
@@ -293,9 +293,10 @@ try {
     }),
   );
   data = settings;
-  modeBadge($("mode"), current.mode);
+  showSource(current.mode);
+  setText($("station"), current.station.name);
   $("simulated").hidden = current.mode !== "simulator";
   build();
 } catch (error) {
-  show(`✕ Could not load the settings: ${error.message}`, "critical");
+  show(`Could not load the settings: ${error.message}`, "critical");
 }

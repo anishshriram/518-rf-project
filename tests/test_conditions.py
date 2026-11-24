@@ -180,3 +180,12 @@ def test_rebuild_keeps_clock_verdicts(client, config):
     send(client, packet(NOON, 20, 50), source="hardware")  # far from the clock
     _, rows, _ = run_rebuild(config)
     assert (rows[0]["quality"], rows[0]["reject_reason"]) == ("suspect", "clock_skew")
+
+
+def test_change_over_the_past_hour(client):
+    send(client, *[packet(NOON + i * MINUTE, 15 - i / 60, 50) for i in range(40)])
+    assert client.get("/api/current").json()["change_1h"]["temp_c"] is None
+    send(client, *[packet(NOON + i * MINUTE, 15 - i / 60, 50) for i in range(40, 70)])
+    change = client.get("/api/current").json()["change_1h"]
+    assert change["temp_c"] == pytest.approx(-1, abs=0.05)
+    assert change["rh_pct"] == pytest.approx(0)

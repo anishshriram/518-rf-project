@@ -49,6 +49,24 @@ def trends(minutes: list[sqlite3.Row], end: int, window_min: int) -> dict:
     return result
 
 
+def change_over_hour(minutes: list[sqlite3.Row], end: int) -> dict:
+    """Difference between 5-minute means now and an hour ago, or None."""
+
+    def mean(column: str, until: int) -> float | None:
+        values = [
+            row[column]
+            for row in minutes
+            if until - 5 * MINUTE < row["t"] <= until and row[column] is not None
+        ]
+        return sum(values) / len(values) if len(values) >= 2 else None
+
+    result = {}
+    for column in ("temp_c", "rh_pct"):
+        now, before = mean(column, end), mean(column, end - 60 * MINUTE)
+        result[column] = None if now is None or before is None else now - before
+    return result
+
+
 def local_midnight(ts_ms: int, timezone: str) -> int:
     """Start of the local calendar day containing ts_ms."""
     local = datetime.fromtimestamp(ts_ms / 1000, ZoneInfo(timezone))
@@ -65,7 +83,7 @@ def conditions(
 ) -> dict:
     """Sky, trends and today's figures as of `end`."""
     midnight = local_midnight(end, config.station.timezone)
-    start = min(midnight, end - 60 * MINUTE)
+    start = min(midnight, end - 66 * MINUTE)
     minutes = minute_averages(conn, source, start, end)
     today = [row for row in minutes if row["t"] >= midnight]
     temps = [row["temp_c"] for row in today]
@@ -76,6 +94,7 @@ def conditions(
     return {
         "sky": sky,
         "clearness": clearness,
+        "change_1h": change_over_hour(minutes, end),
         "trends": trends(minutes, end, 30),
         "trends_60m": trends(minutes, end, 60),
         "today": {

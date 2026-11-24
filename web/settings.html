@@ -8,21 +8,30 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <header>
-    <h1>PIP Weather <span>— Settings</span></h1>
-    <span id="mode" class="badge" hidden></span>
-    <a class="status" href="./">Live dashboard</a>
-    <a href="history.html">History</a>
-  </header>
-  <div id="message" class="banner info" role="status" hidden></div>
-  <div id="simulated" class="banner warning" hidden>⚠ These settings belong to the simulator's database, which is replaced on every run.</div>
-  <form id="form" novalidate>
-    <div id="sections"></div>
-    <div class="save-bar">
-      <button type="submit">Save changes</button>
-      <button id="test-alert" type="button">Send test alert</button>
-    </div>
-  </form>
+  <div class="top">
+    <div id="source-strip" class="source-strip" hidden></div>
+    <header class="site">
+      <div class="identity"><h1 id="station">PIP Weather</h1></div>
+      <ul class="trust" aria-label="Data status"><li><span id="source" data-source="none">Loading…</span></li></ul>
+      <nav aria-label="Pages">
+        <a href="./">Live</a>
+        <a href="history.html">History</a>
+        <a href="settings.html" aria-current="page">Settings</a>
+      </nav>
+    </header>
+  </div>
+  <main>
+    <h2>Settings</h2>
+    <p id="simulated" class="note" hidden>These settings belong to the simulator's database, which is replaced on every run.</p>
+    <form id="form" novalidate>
+      <div id="sections"></div>
+      <div class="save-bar">
+        <button class="primary-button" type="submit">Save changes</button>
+        <button id="test-alert" type="button">Send test alert</button>
+      </div>
+      <div id="message" class="message" role="status" hidden></div>
+    </form>
+  </main>
   <script type="module" src="js/settings.js"></script>
 </body>
 </html>

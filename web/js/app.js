@@ -1,97 +1,103 @@
 // Start-up, live stream and page state.
 
 import { Alerts } from "./alerts.js";
-import { Cards } from "./cards.js";
 import { ChartSet, HISTORY_KEYS } from "./charts.js";
-import { renderDays, renderHealth } from "./daily.js";
-import { formatAge, formatTime, modeBadge, setDefaultUnit, tempUnit, toggleUnit } from "./units.js";
+import { renderHealth, renderWeek } from "./daily.js";
+import { $, getJson, segmented, setText, showSource } from "./dom.js";
+import { icon } from "./icons.js";
+import { Now } from "./now.js";
+import { chooseUnit, formatAge, formatPlace, formatTime, setDefaultUnit, tempUnit } from "./units.js";
 
-const $ = (id) => document.getElementById(id);
 const MINUTE = 60000, HOUR = 60 * MINUTE, DAY = 24 * HOUR;
 const WINDOWS = [
   ["15 min", 15 * MINUTE], ["1 h", HOUR], ["6 h", 6 * HOUR],
   ["24 h", DAY], ["7 d", 7 * DAY], ["30 d", 30 * DAY],
 ];
 
-const charts = new ChartSet($("charts"));
-const cards = new Cards($("cards"), $("table-head"), $("table-body"));
+function saved(key, allowed, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key));
+    return allowed.includes(value) ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
-const alerts = new Alerts($("alerts"), $("timeline"));
+function save(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch { /* storage may be blocked */ }
+}
 
-let span = WINDOWS[0][1];
+const charts = new ChartSet($("charts"), $("signal-chart"), {
+  announce: (text) => setText($("chart-announce"), text),
+  onSummary: (text) => setText($("chart-summary"), text),
+});
+const now = new Now();
+const alerts = new Alerts({
+  main: $("alert"), others: $("other-alerts"), quiet: $("no-alerts"), timeline: $("timeline"), more: $("more-events"),
+});
+
+let span = saved("span", WINDOWS.map((w) => w[1]), 6 * HOUR);
 let current = null;     // last /api/current response
 let clockOffset = 0;    // server clock minus browser clock
 let lastSeen = null;    // server-clock time of the newest packet
 let lastTs = null;      // newest reading timestamp
 let lastId = 0;
 let shadedUntil = Infinity; // night shading is known up to here
+let days = null;
 let eventsTimer = null;
 let loads = 0;
 let loading = false;
 let reloadTimer = null;
 let buffered = [];
-let connected = false;
+let connected = null;   // null until the first attempt has an outcome
 
 const serverNow = () => Date.now() + clockOffset;
 const isHardware = () => (current?.mode ?? "hardware") === "hardware";
 // Simulated and replayed time is unrelated to the clock: follow the data.
 const windowEnd = () => (isHardware() || lastTs === null ? Math.max(serverNow(), lastTs ?? 0) : lastTs);
 
-async function getJson(url) {
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
-  return response.json();
-}
-
 function applyCurrent(data) {
   current = data;
   clockOffset = data.server_ms - Date.now();
   if (data.age_s !== null) lastSeen = data.server_ms - data.age_s * 1000;
-  cards.conditions = data;
+  now.conditions = data;
+  charts.alpha = data.smoothing_alpha;
+  charts.mode = data.mode;
+  charts.timeZone = now.timeZone = alerts.timeZone = data.station.timezone;
   if (setDefaultUnit(data.display_temperature)) showUnit();
-  charts.timeZone = cards.timeZone = alerts.timeZone = data.station.timezone;
-  $("station").textContent = `— ${data.station.name}`;
-  renderAdvice(data);
+  setText($("station"), data.station.name);
+  document.title = `${data.station.name} — PIP Weather`;
+  setText($("place"), formatPlace(data.station.latitude, data.station.longitude));
   $("enable-notifications").hidden = !data.browser_notifications
     || !("Notification" in window) || Notification.permission !== "default";
-  modeBadge($("mode"), data.mode);
-}
-
-function renderAdvice({ recommendations: r }) {
-  $("advice").hidden = r.window_condensation_risk === null;
-  const score = r.laundry_score;
-  const label = score >= 70 ? "great" : score >= 40 ? "okay" : "poor";
-  $("advice").textContent = [
-    r.open_windows ? "✓ Good time to open windows" : "✗ Keep windows closed",
-    `Laundry drying: ${score === null ? "–" : `${Math.round(score)} (${label})`}`,
-    `Window condensation: ${r.window_condensation_risk} (estimate)`,
-  ].join("  ·  ");
+  showSource(data.mode);
 }
 
 async function loadEvents() {
   if (lastTs === null) {
     alerts.setEvents([]);
-    charts.events = [];
+    charts.events = now.events = [];
     return;
   }
   const from = Math.max(0, Math.floor(windowEnd() - Math.max(span, 7 * DAY)));
   try {
     const events = await getJson(`api/events?from=${from}`);
     alerts.setEvents(events);
-    charts.events = events;
+    charts.events = now.events = events;
     charts.draw(windowEnd());
   } catch (error) {
     console.warn(error);
   }
 }
 
-let days = [];
 async function loadPanels() {
   try {
     const [health, recent] = await Promise.all([getJson("api/health"), getJson("api/daily")]);
-    renderHealth($("health"), health, charts.timeZone);
+    renderHealth($("health"), $("health-summary"), health, charts.timeZone);
     days = recent.slice(-7);
-    renderDays($("days"), days, charts.timeZone, false);
+    renderWeek($("days"), days);
   } catch (error) {
     console.warn(error);
   }
@@ -107,28 +113,26 @@ async function load() {
   const token = ++loads;
   loading = true;
   try {
-    const now = await getJson("api/current");
+    const data = await getJson("api/current");
     if (token !== loads) return;
-    const modeChanged = current && current.mode !== now.mode;
-    applyCurrent(now);
-    lastTs = now.last_reading_ms;
+    const modeChanged = current && current.mode !== data.mode;
+    applyCurrent(data);
+    lastTs = data.last_reading_ms;
     const from = Math.max(0, Math.floor(windowEnd() - span));
-    const metrics = HISTORY_KEYS.join(",");
-    const history = await getJson(`api/history?from=${from}&metrics=${metrics}`);
+    const history = await getJson(`api/history?from=${from}&metrics=${HISTORY_KEYS.join(",")}`);
     if (token !== loads) return;
     charts.load(history, span);
     lastId = history.last_id;
     shadedUntil = lastTs === null ? Infinity : windowEnd() + DAY;
-    if (modeChanged) cards.clear();
-    if (now.last_reading_ms !== null) cards.show({ ...now, ts_ms: now.last_reading_ms });
-    else cards.clear();
+    if (modeChanged || lastTs === null) now.clear();
+    if (lastTs !== null) now.show({ ...data, ts_ms: lastTs });
     loading = false;
     const pending = buffered;
     buffered = [];
     pending.forEach(onReading);
     charts.end = windowEnd();
     charts.drawNow();
-    cards.render();
+    $("charts").classList.remove("updating");
     renderState();
     loadEvents();
     loadPanels();
@@ -156,41 +160,56 @@ function onReading(reading) {
   lastId = reading.id;
   if (!charts.add(reading)) scheduleLoad(1000); // late data: fetch it in order
   const newest = lastTs === null || reading.ts_ms >= lastTs;
-  const seen = isHardware() ? reading.ts_ms : serverNow();
-  lastSeen = Math.max(lastSeen ?? 0, seen);
+  lastSeen = Math.max(lastSeen ?? 0, isHardware() ? reading.ts_ms : serverNow());
   if (newest) {
     lastTs = reading.ts_ms;
-    cards.show(reading);
+    now.show(reading);
   }
   charts.draw(windowEnd());
   if (windowEnd() > shadedUntil) load();
 }
 
+function renderConnection() {
+  const state = connected === null ? "waiting" : connected ? "up" : "down";
+  if ($("connection").dataset.state !== state) {
+    $("connection").dataset.state = state;
+    $("connection-icon").replaceChildren(icon(state === "down" ? "unlink" : "link"));
+  }
+  setText($("connection-text"), { waiting: "Connecting…", up: "Connected", down: "Server unreachable, retrying" }[state]);
+}
+
 function renderState() {
-  $("unreachable").hidden = connected;
+  renderConnection();
   if (!current) return;
   const never = lastSeen === null;
   const ids = current.tag.allowed_tx_ids;
   $("waiting").hidden = !never;
-  $("waiting-title").textContent =
-    `Waiting for first packet from ${ids.length ? `tag ${ids.join(", ")}` : "any tag"}… ` +
-    `(receiver heard ${current.bad_crc_1h} noise packets in the last hour)`;
+  for (const id of ["now", "trends", "lower"]) $(id).hidden = never;
+  $("attention").hidden = never;
   if (never) {
-    $("offline").hidden = true;
-    $("status").textContent = connected ? "○ Waiting for data" : "✕ Disconnected";
+    setText($("waiting-title"), `Waiting for the first packet from ${ids.length ? `tag ${ids.join(" or ")}` : "any tag"}`);
+    const noise = current.bad_crc_1h;
+    setText($("waiting-text"), noise
+      ? `The receiver is working: it heard ${noise} noise packet${noise === 1 ? "" : "s"} in the last hour, but none from the tag. If it stays quiet:`
+      : "Nothing has been received in the last hour. Check that the receiver is plugged in and the collector is running, then:");
+    setText($("freshness"), "No readings yet");
+    $("freshness").classList.remove("old");
+    alerts.setOffline(null);
     return;
   }
   const age = Math.max(0, (serverNow() - lastSeen) / 1000);
   const offline = age >= current.tag.offline_warning_s;
   const critical = age >= current.tag.offline_critical_s;
-  alerts.setOfflineShown(offline);
-  cards.setStale(offline || !connected);
-  $("offline").hidden = !offline;
-  $("offline").className = `banner ${critical ? "critical" : "warning"}`;
-  $("offline").textContent =
-    `${critical ? "✕" : "⚠"} Tag offline — last packet ${formatAge(age)} ago` +
-    (lastTs === null ? "" : ` (reading from ${formatTime(lastTs, charts.timeZone)})`);
-  $("status").textContent = connected ? `Last packet ${formatAge(age)} ago` : "✕ Disconnected";
+  setText($("freshness"), age < 10 && !offline ? "Last reading just now" : `Last reading ${formatAge(age)} ago`);
+  $("freshness").classList.toggle("old", offline);
+  alerts.setOffline(offline && connected ? {
+    severity: critical ? "critical" : "warning",
+    start_ms: lastTs,
+    // No running seconds here: this text is announced by screen readers.
+    explanation: `The last reading is from ${formatTime(lastTs, charts.timeZone)}.`,
+  } : null);
+  now.render({ staleAge: offline ? age : null, connected: connected !== false });
+  if ($("health-details").open) now.renderTable();
 }
 
 function connect() {
@@ -202,7 +221,7 @@ function connect() {
   });
   source.addEventListener("reading", (event) => onReading(JSON.parse(event.data)));
   source.addEventListener("alert", (event) => {
-    alerts.onAlert(JSON.parse(event.data), current?.browser_notifications, current?.sound);
+    alerts.onAlert(JSON.parse(event.data), { notifications: current?.browser_notifications, sound: current?.sound });
     scheduleEvents();
   });
   for (const name of ["alert_cleared", "inference"]) source.addEventListener(name, scheduleEvents);
@@ -216,45 +235,45 @@ function connect() {
   });
 }
 
-for (const [label, ms] of WINDOWS) {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.textContent = label;
-  button.setAttribute("aria-pressed", String(ms === span));
-  button.addEventListener("click", () => {
-    span = ms;
-    for (const other of $("windows").children) other.setAttribute("aria-pressed", String(other === button));
-    load();
-  });
-  $("windows").append(button);
+function showUnit() {
+  for (const button of $("units").children) button.setAttribute("aria-pressed", String(button.textContent === tempUnit()));
+  if (days) renderWeek($("days"), days);
+  if (!current) return;
+  if (charts.end) charts.drawNow();
+  renderState();
 }
 
+segmented($("units"), [["°C", "C"], ["°F", "F"]], tempUnit().slice(1), (unit) => {
+  chooseUnit(unit);
+  showUnit();
+});
+segmented($("windows"), WINDOWS, span, (ms) => {
+  span = ms;
+  save("span", ms);
+  $("charts").classList.add("updating");
+  load();
+});
+$("smooth").checked = charts.smooth = saved("smooth", [true, false], false);
+$("smooth").addEventListener("change", () => {
+  charts.smooth = $("smooth").checked;
+  save("smooth", charts.smooth);
+  charts.drawNow();
+});
+$("suspect").addEventListener("change", () => {
+  charts.showSuspect = $("suspect").checked;
+  charts.drawNow();
+});
+for (const id of ["details", "health-details"]) $(id).addEventListener("toggle", renderState);
+$("no-alerts-icon").append(icon("check"));
 $("enable-notifications").addEventListener("click", async () => {
   await Notification.requestPermission();
   $("enable-notifications").hidden = true;
 });
-$("test-alert").addEventListener("click", () => fetch("api/alerts/test", { method: "POST" }).catch(() => {}));
 
-$("unit").textContent = tempUnit();
-
-function showUnit() {
-  $("unit").textContent = tempUnit();
-  charts.changeUnit();
-  renderDays($("days"), days, charts.timeZone, false);
-  cards.render();
-}
-$("unit").addEventListener("click", () => {
-  toggleUnit();
-  showUnit();
-  charts.drawNow();
-});
-
+renderConnection();
 setInterval(() => {
   renderState();
-  if (current && lastSeen !== null) {
-    cards.render();
-    if (isHardware()) charts.draw(windowEnd());
-  }
+  if (current && lastSeen !== null && isHardware()) charts.draw(windowEnd());
 }, 1000);
 setInterval(() => { if (span >= DAY && connected) load(); }, MINUTE);
 setInterval(async () => {

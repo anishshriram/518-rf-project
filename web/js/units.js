@@ -17,24 +17,36 @@ export function setDefaultUnit(unit) {
 
 export const tempUnit = () => (fahrenheit ? "°F" : "°C");
 
-export function toggleUnit() {
-  fahrenheit = !fahrenheit;
+export function chooseUnit(unit) {
+  fahrenheit = unit === "F";
   chosen = true;
   try {
-    localStorage.setItem("unit", fahrenheit ? "F" : "C");
+    localStorage.setItem("unit", unit);
   } catch { /* storage may be blocked */ }
 }
 
-export const convertTemp = (c) => (c === null || !fahrenheit ? c : (c * 9) / 5 + 32);
+export const MISSING = "—";
+export const isMissing = (value) => value === null || value === undefined;
+export const convertTemp = (c) => (isMissing(c) ? null : fahrenheit ? (c * 9) / 5 + 32 : c);
+/** A difference in temperature: no 32 degree offset. */
+export const convertDelta = (c) => (isMissing(c) ? null : fahrenheit ? (c * 9) / 5 : c);
 
-export const formatNumber = (value, digits) =>
-  value === null || value === undefined ? "–" : value.toFixed(digits).replace("-", "−");
+export function formatNumber(value, digits) {
+  if (isMissing(value)) return MISSING;
+  const text = value.toFixed(digits);
+  return Number(text) === 0 ? text.replace("-", "") : text.replace("-", "−");
+}
 
+export const formatTemp = (c) => formatNumber(convertTemp(c), 1);
+export const withUnit = (c) => (isMissing(c) ? MISSING : `${formatTemp(c)} ${tempUnit()}`);
+
+/** "4 minutes", for sentences. */
 export function formatAge(seconds) {
-  if (seconds < 90) return `${Math.round(seconds)} s`;
-  if (seconds < 5400) return `${Math.round(seconds / 60)} min`;
-  if (seconds < 172800) return `${Math.round(seconds / 3600)} h`;
-  return `${Math.round(seconds / 86400)} d`;
+  const say = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (seconds < 90) return say(Math.round(seconds), "second");
+  if (seconds < 5400) return say(Math.round(seconds / 60), "minute");
+  if (seconds < 172800) return say(Math.round(seconds / 3600), "hour");
+  return say(Math.round(seconds / 86400), "day");
 }
 
 // Times are always shown in the station's time zone.
@@ -50,19 +62,30 @@ const DATE = { month: "short", day: "numeric" };
 
 export function formatTick(ms, timeZone, spanMs) {
   if (spanMs > 2 * 86400000) return formatter(timeZone, DATE).format(ms);
-  if (spanMs > 12 * 3600000) return formatter(timeZone, { ...DATE, ...CLOCK }).format(ms);
   return formatter(timeZone, CLOCK).format(ms);
 }
 
 export const formatTime = (ms, timeZone) =>
   formatter(timeZone, { ...DATE, ...CLOCK, second: "2-digit", timeZoneName: "short" }).format(ms);
 
-export const formatClock = (ms, timeZone) =>
-  ms === null || ms === undefined ? "–" : formatter(timeZone, CLOCK).format(ms);
+export const formatMoment = (ms, timeZone) => formatter(timeZone, { ...DATE, ...CLOCK }).format(ms);
 
-/** Shows clearly where the data comes from. */
-export function modeBadge(badge, mode) {
-  badge.hidden = mode === null;
-  badge.className = `badge ${mode ?? ""}`;
-  badge.textContent = { simulator: "⚠ SIMULATED DATA", replay: "↻ REPLAYED DATA" }[mode] ?? "● LIVE (hardware)";
+export const formatClock = (ms, timeZone) =>
+  isMissing(ms) ? MISSING : formatter(timeZone, CLOCK).format(ms);
+
+/** "Fri, Nov 20" for a YYYY-MM-DD date. */
+export const formatDay = (date) =>
+  formatter("UTC", { weekday: "short", ...DATE }).format(Date.parse(`${date}T00:00:00Z`));
+
+export function formatPlace(latitude, longitude) {
+  const part = (v, plus, minus) => `${Math.abs(v).toFixed(2)}° ${v >= 0 ? plus : minus}`;
+  return `${part(latitude, "N", "S")}, ${part(longitude, "E", "W")}`;
+}
+
+/** Milliseconds that local time is ahead of UTC. */
+export function zoneOffset(ms, timeZone) {
+  const part = Object.fromEntries(formatter(timeZone, {
+    year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric", hourCycle: "h23",
+  }).formatToParts(ms).map((p) => [p.type, Number(p.value)]));
+  return Date.UTC(part.year, part.month - 1, part.day, part.hour, part.minute, part.second) - Math.floor(ms / 1000) * 1000;
 }

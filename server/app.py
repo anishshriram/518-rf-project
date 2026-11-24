@@ -150,9 +150,6 @@ def create_app(config: Config) -> FastAPI:
 
     def run_inference() -> None:
         with reader() as conn:
-            # One snapshot for the whole tick: packets that arrive meanwhile must
-            # not make the last known reading look old.
-            conn.execute("BEGIN")
             latest = db.latest_reading(conn)
             if latest is None:
                 return
@@ -235,7 +232,14 @@ def create_app(config: Config) -> FastAPI:
         }
 
     def reader():
-        return closing(db.open_reader(config.server.db_path))
+        """A connection that sees one unchanging snapshot of the database.
+
+        Otherwise packets that arrive between two queries would make the last
+        known reading look old.
+        """
+        conn = db.open_reader(config.server.db_path)
+        conn.execute("BEGIN")
+        return closing(conn)
 
     def require_token(token: str | None) -> None:
         expected = config.server.ingest_token.encode()
@@ -512,6 +516,7 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
         else {
             "sky": None,
             "clearness": None,
+            "change_1h": {"temp_c": None, "rh_pct": None},
             "trends": {},
             "trends_60m": {},
             "today": {},
@@ -519,7 +524,17 @@ def current(conn, config: Config, calibrator: Calibrator, now: int) -> dict:
     )
     value: Callable = (latest or {}).get
     return {
-        "station": {"name": config.station.name, "timezone": config.station.timezone},
+        "station": {
+            "name": config.station.name,
+            "timezone": config.station.timezone,
+            "latitude": config.station.latitude,
+            "longitude": config.station.longitude,
+        },
+        "smoothing_alpha": config.smoothing.ema_alpha,
+        "home": {
+            "indoor_setpoint_c": config.home.indoor_setpoint_c,
+            "indoor_rh_assumed": config.home.indoor_rh_assumed,
+        },
         "display_temperature": config.units.display_temperature,
         "mode": value("source"),
         "server_ms": now,

@@ -6,6 +6,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 
 import httpx
@@ -217,3 +218,20 @@ def test_stream_delivers_and_server_still_stops(station):
         server.terminate()  # with the stream still open
         server.wait(10)
     assert seen == [1, 2, 3, 4, 5]
+
+
+def test_status_is_stable_while_data_pours_in(station):
+    """Ten simulated minutes per batch must never make the tag look offline."""
+    station.start_server()
+    output = station.simulate("--interval", "20", "--duration", "400000")
+    collector = station.spawn(
+        "collector.collector", "--source", "simulator", stdin=subprocess.PIPE
+    )
+    feeder = threading.Thread(target=collector.communicate, args=(output,))
+    feeder.start()
+    seen = set()
+    with httpx.Client(base_url=station.url) as client:
+        while feeder.is_alive():
+            seen.add(client.get("/api/health").json()["tag"]["status"])
+    feeder.join()
+    assert seen <= {"never_seen", "online"}

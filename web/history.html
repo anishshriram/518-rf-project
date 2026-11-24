@@ -8,45 +8,58 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <header>
-    <h1>PIP Weather <span id="station"></span></h1>
-    <span id="mode" class="badge" hidden></span>
-    <a class="status" href="./">Live dashboard</a>
-    <button id="unit" type="button" aria-label="Switch temperature unit">°C</button>
-  </header>
-  <div id="unreachable" class="banner critical" role="alert" hidden>✕ Server not reachable</div>
+  <div class="top">
+    <div id="source-strip" class="source-strip" hidden></div>
+    <header class="site">
+      <div class="identity"><h1 id="station">PIP Weather</h1></div>
+      <ul class="trust" aria-label="Data status"><li><span id="source" data-source="none">Loading…</span></li></ul>
+      <nav aria-label="Pages">
+        <span id="units" class="segmented" role="group" aria-label="Temperature unit"></span>
+        <a href="./">Live</a>
+        <a href="history.html" aria-current="page">History</a>
+        <a href="settings.html">Settings</a>
+      </nav>
+    </header>
+  </div>
   <main>
-    <nav id="ranges" class="windows" aria-label="Number of days"></nav>
-    <section class="chart">
-      <h2 id="chart-title"></h2>
-      <div class="plot"><canvas id="range-chart" role="img" aria-label="Daily temperature range"></canvas></div>
+    <div id="unreachable" class="message bad" role="alert" hidden>Server unreachable, retrying. What is shown may be out of date.</div>
+    <section aria-labelledby="range-title">
+      <div class="section-head">
+        <h2 id="range-title">Daily temperature range <span id="chart-unit" class="unit"></span></h2>
+        <div id="ranges" class="segmented" role="group" aria-label="Number of days"></div>
+      </div>
+      <div class="chart"><div class="plot"><canvas id="range-chart" role="img" aria-label="Daily temperature range. The same values are in the table below."></canvas></div></div>
     </section>
-    <section class="chart timeline">
-      <h2>Degree days</h2>
-      <div class="scroll"><table id="totals"></table></div>
-      <p class="note">HDD is proportional to heating energy demand, CDD to cooling demand. GDD tracks plant growth. Days with gaps count only the measured part.</p>
+    <section aria-labelledby="summaries-title">
+      <h2 id="summaries-title">Daily summaries</h2>
+      <div class="scroll" tabindex="0" role="region" aria-labelledby="summaries-title"><table id="days"></table></div>
+      <details>
+        <summary>What the columns mean</summary>
+        <p class="meta">Sunshine, sky and daylight are estimates from the light sensor, and need a calibrated sensor.</p>
+        <dl id="glossary" class="glossary"></dl>
+      </details>
     </section>
-    <section class="chart timeline">
-      <h2>Daily summaries</h2>
-      <div class="scroll"><table id="days"></table></div>
-      <p class="note">Sunshine and sky are estimates from the light sensor, and need a calibrated sensor.</p>
+    <section aria-labelledby="degree-title">
+      <h2 id="degree-title">Degree days</h2>
+      <div class="scroll" tabindex="0" role="region" aria-labelledby="degree-title"><table id="totals"></table></div>
+      <p class="note">Calculated from temperature. Heating degree days (HDD) are proportional to heating energy demand, cooling degree days (CDD) to cooling demand, and growing degree days (GDD) track plant growth. Days with gaps count only the measured part.</p>
     </section>
-    <section class="chart timeline">
-      <h2>Export readings as CSV</h2>
-      <form id="export" class="timeline-head">
+    <section aria-labelledby="export-title">
+      <h2 id="export-title">Export readings</h2>
+      <p class="meta">Downloads a CSV file. Dates are in the time zone of this computer.</p>
+      <form id="export" class="form-row">
         <label>From <input type="date" name="from" required></label>
         <label>To <input type="date" name="to" required></label>
-        <label>Resolution
+        <label>Detail
           <select name="resolution">
-            <option value="1m">1 minute</option>
-            <option value="15m">15 minutes</option>
-            <option value="1h">1 hour</option>
+            <option value="1m">1 minute averages</option>
+            <option value="15m">15 minute averages</option>
+            <option value="1h">1 hour averages</option>
             <option value="raw">Every reading</option>
           </select>
         </label>
-        <button type="submit">Download</button>
+        <button class="primary-button" type="submit">Download</button>
       </form>
-      <p class="note">Dates are in the time zone of this computer.</p>
     </section>
   </main>
   <script src="vendor/chart.umd.js"></script>

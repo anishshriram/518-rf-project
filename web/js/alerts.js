@@ -1,19 +1,12 @@
-// Alert banners, event timeline and browser notifications.
+// The most important alert, other alerts, the event timeline and notifications.
 
-import { formatTime } from "./units.js";
+import { element, setText } from "./dom.js";
+import { GUIDANCE, RANK, SEVERITY } from "./copy.js";
+import { icon } from "./icons.js";
+import { formatMoment } from "./units.js";
 
-const ICONS = { info: "ℹ", watch: "👁", warning: "⚠", critical: "✕" };
-const TIMELINE_ROWS = 50;
-const TEST_BANNER_MS = 10000;
-
-function element(tag, className, text) {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
-
-const isAlert = (event) => event.severity !== "info";
+const FIRST_ROWS = 6;
+const TEST_SHOWN_MS = 10000;
 
 /** Two short tones. Browsers allow sound only after a click on the page. */
 function chime() {
@@ -34,90 +27,153 @@ function chime() {
   }
 }
 
+const isAlert = (event) => event.severity !== "info";
+const mostImportantFirst = (a, b) => RANK[b.severity] - RANK[a.severity] || b.start_ms - a.start_ms;
+
 export class Alerts {
-  constructor(banners, timeline) {
-    this.banners = banners;
+  constructor({ main, others, quiet, timeline, more }) {
+    this.main = main;
+    this.others = others;
+    this.quiet = quiet;
     this.timeline = timeline;
+    this.more = more;
     this.events = [];
-    this.timeZone = "UTC";
+    this.offline = null; // stands in until the server's own event arrives
     this.test = null;
-    this.offlineShown = false; // the page already says that the tag is offline
+    this.timeZone = "UTC";
+    this.ready = false;
+    this.expanded = false;
+    this.alertKey = this.timelineKey = "";
+    more.addEventListener("click", () => {
+      this.expanded = !this.expanded;
+      this.render();
+    });
   }
 
   setEvents(events) {
     this.events = events;
+    this.ready = true;
     this.render();
   }
 
-  setOfflineShown(shown) {
-    if (shown === this.offlineShown) return;
-    this.offlineShown = shown;
-    this.render();
+  /** Called every second; `offline` is {severity, start_ms, explanation} or null. */
+  setOffline(offline) {
+    this.offline = offline && { ...offline, id: null, type: "tag_offline", title: "Sensor offline", confidence: "high", end_ms: null };
+    this.#renderAlerts();
   }
 
   render() {
-    const active = this.events.filter((e) => isAlert(e) && e.banner !== false && e.end_ms === null && !e.acknowledged
-      && !(e.type === "tag_offline" && this.offlineShown));
-    this.banners.replaceChildren(...(this.test ? [this.test, ...active] : active).map((e) => this.#banner(e)));
-    this.timeline.replaceChildren(...this.events.slice(0, TIMELINE_ROWS).map((e) => this.#entry(e)));
-    if (!this.events.length) this.timeline.append(element("li", "note", "No events yet."));
+    this.#renderAlerts();
+    this.#renderTimeline();
+  }
+
+  #renderAlerts() {
+    const active = this.events.filter((e) => isAlert(e) && e.banner !== false && e.end_ms === null);
+    const serverOffline = active.find((e) => e.type === "tag_offline");
+    const open = active.filter((e) => !e.acknowledged);
+    if (this.offline && !serverOffline) open.push(this.offline);
+    if (this.test) open.push(this.test);
+    open.sort(mostImportantFirst);
+    const acknowledged = active.filter((e) => e.acknowledged);
+
+    // Rebuild only on change: this region is announced by screen readers.
+    const key = JSON.stringify([open, acknowledged, this.timeZone, this.ready]);
+    if (key === this.alertKey) return;
+    this.alertKey = key;
+    const [first, ...rest] = open;
+    this.main.replaceChildren(...(first ? [this.#banner(first)] : []));
+    const list = element("ul");
+    list.append(...rest.map((e) => this.#row(e, false)), ...acknowledged.map((e) => this.#row(e, true)));
+    this.others.replaceChildren(...(list.children.length
+      ? [element("h3", "", first ? "Also active" : "Acknowledged and still ongoing"), list] : []));
+    this.quiet.hidden = !this.ready || Boolean(first) || acknowledged.length > 0;
   }
 
   #banner(event) {
-    const node = element("div", `banner alert ${event.severity}`);
-    const text = element("div");
-    text.append(
-      element("strong", "", `${ICONS[event.severity]} ${event.severity.toUpperCase()}: ${event.title}`),
-      element("div", "", event.explanation),
-    );
-    const button = element("button", "", "Dismiss");
-    button.type = "button";
-    button.addEventListener("click", () => this.#dismiss(event));
-    node.append(text, button);
-    return node;
+    const [word, name] = SEVERITY[event.severity];
+    const [why, next] = GUIDANCE[event.type] ?? ["", ""];
+    const text = element("div", "alert-text",
+      element("p", "alert-kind", `${word} · since ${formatMoment(event.start_ms, this.timeZone)}${event.confidence ? ` · ${event.confidence} confidence` : ""}`),
+      element("h2", "", event.title),
+      element("p", "", event.explanation));
+    if (why) text.append(element("p", "", why, next ? " " : null, next ? element("strong", "", next) : null));
+    const box = element("div", `alert ${event.severity}`, icon(name), text);
+    if (event.id !== null || event.type === "test") box.append(this.#ackButton(event));
+    return box;
   }
 
-  async #dismiss(event) {
-    if (event.id === null) {
+  #row(event, acknowledged) {
+    const [word, name] = SEVERITY[event.severity];
+    const row = element("li", event.severity, icon(name), element("span", "", element("strong", "", event.title),
+      ` · ${word.toLowerCase()} · ${acknowledged ? "acknowledged, still ongoing" : "ongoing"} since ${formatMoment(event.start_ms, this.timeZone)}`));
+    if (!acknowledged && event.id !== null) row.append(this.#ackButton(event));
+    return row;
+  }
+
+  #ackButton(event) {
+    const button = element("button", "quiet", event.type === "test" ? "Close" : "Acknowledge");
+    button.type = "button";
+    button.setAttribute("aria-label", `${button.textContent}: ${event.title}`);
+    button.addEventListener("click", () => this.#acknowledge(event, button));
+    return button;
+  }
+
+  async #acknowledge(event, button) {
+    if (event.type === "test") {
       this.test = null;
     } else {
+      button.disabled = true;
       const response = await fetch(`api/events/${event.id}/ack`, { method: "POST" }).catch(() => null);
-      if (!response?.ok) return;
+      if (!response?.ok) {
+        button.disabled = false;
+        setText(button, "Try again");
+        return;
+      }
       event.acknowledged = true;
     }
     this.render();
   }
 
+  #renderTimeline() {
+    const shown = this.expanded ? this.events : this.events.slice(0, FIRST_ROWS);
+    const key = JSON.stringify([shown, this.events.length, this.timeZone]);
+    if (key === this.timelineKey) return;
+    this.timelineKey = key;
+    this.more.hidden = this.events.length <= FIRST_ROWS;
+    setText(this.more, this.expanded ? "Show fewer" : `Show all ${this.events.length}`);
+    if (!shown.length) {
+      this.timeline.replaceChildren(element("li", "empty", "Nothing yet. Frost, fog, sudden darkening, sensor problems and similar events will appear here."));
+      return;
+    }
+    this.timeline.replaceChildren(...shown.map((e) => this.#entry(e)));
+  }
+
   #entry(event) {
-    const node = element("li", event.severity);
-    const until = event.end_ms === null ? "now" : formatTime(event.end_ms, this.timeZone);
-    const head = element("div");
-    head.append(
-      element("strong", "", `${ICONS[event.severity]} ${event.title}`),
-      element("span", "note", ` ${event.severity}, ${event.confidence} confidence${event.end_ms === null ? " — active" : ""}`),
-    );
-    node.append(
-      head,
-      element("div", "", event.explanation),
-      element("div", "note", `${formatTime(event.start_ms, this.timeZone)} → ${until}`),
-    );
-    return node;
+    const [word, name] = SEVERITY[event.severity];
+    const start = formatMoment(event.start_ms, this.timeZone);
+    let state = `${start} to ${event.end_ms === null ? "" : formatMoment(event.end_ms, this.timeZone)}`;
+    if (event.end_ms === null) state = `Ongoing since ${start}${event.acknowledged ? ", acknowledged" : ""}`;
+    return element("li", event.severity, icon(name), element("div", "",
+      element("p", "", element("strong", "", event.title)),
+      element("p", "meta", `${word} · ${state} · inferred, ${event.confidence} confidence`),
+      element("p", "", event.explanation)));
   }
 
   /** A live alert from the stream; the event list is refreshed separately. */
-  onAlert(event, browserNotifications, sound) {
+  onAlert(event, { notifications, sound }) {
     if (sound && (event.severity === "critical" || event.type === "test")) chime();
     if (event.type === "test") {
-      this.test = event;
+      this.test = { ...event, confidence: "", end_ms: null };
+      const shown = this.test;
       this.render();
       setTimeout(() => {
-        if (this.test === event) {
+        if (this.test === shown) {
           this.test = null;
           this.render();
         }
-      }, TEST_BANNER_MS);
+      }, TEST_SHOWN_MS);
     }
-    if (!event.notify || !browserNotifications) return;
+    if (!event.notify || !notifications) return;
     if (!("Notification" in window) || Notification.permission !== "granted") return;
     const label = { simulator: "[SIMULATED] ", replay: "[REPLAYED] " }[event.source] ?? "";
     try {

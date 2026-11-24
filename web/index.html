@@ -8,59 +8,139 @@
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <header>
-    <h1>PIP Weather <span id="station"></span></h1>
-    <span id="mode" class="badge" hidden></span>
-    <span id="status" class="status" role="status">Connecting…</span>
-    <a href="history.html">History</a>
-    <a href="settings.html">Settings</a>
-    <button id="unit" type="button" aria-label="Switch temperature unit">°C</button>
-  </header>
-
-  <div id="unreachable" class="banner critical" role="alert" hidden>✕ Server not reachable — retrying…</div>
-  <div id="offline" class="banner warning" role="alert" hidden></div>
-  <div id="alerts" aria-live="assertive"></div>
-  <section id="waiting" class="banner info" hidden>
-    <strong id="waiting-title"></strong>
-    <ul>
-      <li>Is the battery fitted and fresh?</li>
-      <li>Is the tag close to the receiver?</li>
-      <li>Does the tag ID in <code>config.toml</code> match the sticker on the tag?</li>
-    </ul>
-  </section>
+  <a class="skip" href="#now">Skip to current conditions</a>
+  <div class="top">
+    <div id="source-strip" class="source-strip" hidden></div>
+    <header class="site">
+      <div class="identity">
+        <h1 id="station">PIP Weather</h1>
+        <p id="place"></p>
+      </div>
+      <ul class="trust" aria-label="Data status">
+        <li><span id="source" data-source="none">Loading…</span></li>
+        <li id="connection"><span id="connection-icon"></span><span id="connection-text">Connecting…</span></li>
+        <li id="freshness"></li>
+      </ul>
+      <nav aria-label="Pages">
+        <span id="units" class="segmented" role="group" aria-label="Temperature unit"></span>
+        <a href="history.html">History</a>
+        <a href="settings.html">Settings</a>
+      </nav>
+    </header>
+  </div>
 
   <main>
-    <section id="cards" class="cards" aria-label="Latest values"></section>
-    <p id="advice" class="advice" hidden></p>
-    <nav id="windows" class="windows" aria-label="Time window"></nav>
-    <section id="charts" class="charts"></section>
-    <section class="chart timeline">
-      <div class="timeline-head">
-        <h2>Events</h2>
-        <button id="enable-notifications" type="button" hidden>Enable notifications</button>
-        <button id="test-alert" type="button">Send test alert</button>
-      </div>
-      <ol id="timeline"></ol>
+    <section id="attention" class="attention" aria-label="Alerts">
+      <div id="alert" aria-live="polite"></div>
+      <div id="other-alerts" class="other-alerts"></div>
+      <p id="no-alerts" class="quiet-line" hidden><span id="no-alerts-icon"></span>No active alerts</p>
     </section>
-    <div class="panels">
-      <section class="chart">
-        <div class="timeline-head"><h2>Today and recent days</h2><a href="history.html">History and export</a></div>
-        <div class="scroll"><table id="days"></table></div>
+
+    <section id="waiting" class="waiting" hidden>
+      <h2 id="waiting-title"></h2>
+      <p id="waiting-text"></p>
+      <ol>
+        <li>Fit a fresh CR2032 battery in the tag.</li>
+        <li>Move the tag within a few meters of the receiver.</li>
+        <li>Compare the tag ID in <a href="settings.html">Settings</a> with the sticker on the tag.</li>
+      </ol>
+    </section>
+
+    <section id="now" class="now" aria-labelledby="now-title" aria-busy="true">
+      <div class="section-head">
+        <h2 id="now-title">Right now</h2>
+        <p id="as-of" class="meta"></p>
+      </div>
+      <div class="now-grid">
+        <div class="primary">
+          <h3>Temperature</h3>
+          <p class="reading big"><span id="temp" class="num">—</span> <span class="unit" data-temp-unit></span></p>
+          <p id="temp-trend" class="trend"></p>
+          <dl class="inline-facts">
+            <div><dt>Feels like</dt><dd id="feels" class="num">—</dd></div>
+            <div><dt>High today</dt><dd id="high" class="num">—</dd></div>
+            <div><dt>Low today</dt><dd id="low" class="num">—</dd></div>
+          </dl>
+          <p id="sun-affected" class="note" hidden>The sensor seems to be in direct sun, so the temperature may read high.</p>
+        </div>
+        <div class="supporting">
+          <h3>Humidity</h3>
+          <p class="reading"><span id="rh" class="num">—</span> <span class="unit">%</span></p>
+          <p id="rh-trend" class="trend"></p>
+          <dl class="inline-facts">
+            <div><dt>Dew point</dt><dd id="dew" class="num">—</dd></div>
+          </dl>
+        </div>
+        <div class="supporting">
+          <h3>Light and daylight</h3>
+          <p class="reading sky"><span id="sky-icon"></span><span id="sky">—</span></p>
+          <p id="sky-note" class="trend"></p>
+          <dl class="inline-facts">
+            <div><dt>Light</dt><dd id="light" class="num">—</dd></div>
+            <div><dt>Sunrise</dt><dd id="sunrise" class="num">—</dd></div>
+            <div><dt>Sunset</dt><dd id="sunset" class="num">—</dd></div>
+          </dl>
+          <p id="calibrating" class="note" hidden><strong>Light sensor calibrating.</strong> It learns its own scale, which takes about a day with both daylight and night.</p>
+        </div>
+      </div>
+      <details id="details">
+        <summary>All measurements and calculations</summary>
+        <div id="details-body" class="detail-groups"></div>
+      </details>
+    </section>
+
+    <section id="suggestions" class="suggestions" aria-labelledby="suggestions-title" hidden>
+      <h2 id="suggestions-title">Suggestions</h2>
+      <ul id="suggestion-list"></ul>
+    </section>
+
+    <section id="trends" class="trends" aria-labelledby="trends-title">
+      <div class="section-head">
+        <h2 id="trends-title">How conditions have changed</h2>
+        <div id="windows" class="segmented" role="group" aria-label="Time range"></div>
+      </div>
+      <div class="chart-options">
+        <label><input id="smooth" type="checkbox"> Smooth lines</label>
+        <label><input id="suspect" type="checkbox" checked> Show suspect readings (hollow points)</label>
+        <span class="meta">Shaded: night</span>
+      </div>
+      <p id="chart-summary" class="meta chart-summary"></p>
+      <div id="charts"></div>
+      <p id="chart-announce" class="visually-hidden" aria-live="polite"></p>
+    </section>
+
+    <div id="lower" class="lower">
+      <section aria-labelledby="days-title">
+        <div class="section-head">
+          <h2 id="days-title">Recent days</h2>
+          <a href="history.html">History and export</a>
+        </div>
+        <ol id="days" class="days"></ol>
       </section>
-      <section class="chart">
-        <h2>Sensor health</h2>
-        <dl id="health"></dl>
+      <section aria-labelledby="events-title">
+        <div class="section-head">
+          <h2 id="events-title">Events</h2>
+          <button id="enable-notifications" class="quiet" type="button" hidden>Enable notifications</button>
+        </div>
+        <ol id="timeline" class="timeline"></ol>
+        <button id="more-events" class="quiet" type="button" hidden></button>
       </section>
     </div>
-    <details>
-      <summary>Latest readings as a table</summary>
-      <table>
-        <thead><tr id="table-head"></tr></thead>
-        <tbody id="table-body"></tbody>
-      </table>
+
+    <details id="health-details" class="health">
+      <summary><span class="summary-title">Sensor health</span> <span id="health-summary" class="meta"></span></summary>
+      <div id="signal-chart"></div>
+      <dl id="health" class="rows"></dl>
+      <h3>Latest readings</h3>
+      <div class="scroll" tabindex="0" role="region" aria-label="Latest readings">
+        <table><thead id="recent-head"></thead><tbody id="recent-body"></tbody></table>
+      </div>
     </details>
-    <p class="note">Hollow points are suspect readings. Lines break where data is missing. Shaded areas are night; dotted vertical lines are events.</p>
   </main>
+  <footer class="site">
+    Temperature, humidity and light are measured by one sensor. Everything else is calculated or estimated from them.
+    Wind, rain and pressure are not measured, and this is not a forecast.
+  </footer>
 
   <script src="vendor/chart.umd.js"></script>
   <script src="vendor/chartjs-adapter-date-fns.bundle.min.js"></script>

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+config.toml
+.env
+data/
+logs/
+PIP_Weather_Station_Spec.md

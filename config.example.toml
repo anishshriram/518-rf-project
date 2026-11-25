@@ -15,7 +15,8 @@ battery_installed = ""        # e.g. "2026-11-30", shown as battery age
 [units]
 display_temperature = "C"     # "C" or "F" (frontend can toggle per user)
 temp_input_unit = "C"         # unit of the `temp:` field from pip_sense
-humidity_scale = 1.0          # multiply raw humidity by this to get %RH (e.g. 0.01 if raw is RH*100)
+temp_scale = 1.0              # multiply raw temperature by this. Real PIP tag: 0.625 (tag sends C*16, pip_sense divides by 10)
+humidity_scale = 1.0          # multiply raw humidity by this to get %RH. Real PIP tag: 0.0625 (tag sends RH*16)
 temp_offset_c = 0.0           # calibration offset vs reference thermometer
 humidity_offset_pct = 0.0
 

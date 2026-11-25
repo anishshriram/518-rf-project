@@ -179,3 +179,27 @@ def test_database_can_be_reopened(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 1
     assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     conn.close()
+
+
+def test_real_tag_scales(conn, config):
+    config.units.temp_scale = 0.625
+    config.units.humidity_scale = 0.0625
+    send(conn, config, packet(temp_raw=32.3, humidity_raw=431.0))
+    (row,) = readings(conn)
+    assert row["temp_c"] == pytest.approx(20.19, abs=0.01)
+    assert row["rh_pct"] == pytest.approx(26.94, abs=0.01)
+
+
+def test_scales_do_not_apply_to_the_simulator(conn, config):
+    config.units.temp_scale = 0.625
+    config.units.humidity_scale = 0.0625
+    send(conn, config, packet(), source="simulator")
+    (row,) = readings(conn)
+    assert (row["temp_c"], row["rh_pct"]) == (20.0, 45.0)
+
+
+def test_negative_temperature_printed_as_unsigned(conn, config):
+    config.units.temp_scale = 0.625
+    send(conn, config, packet(temp_raw=(65536 - 40) / 10))  # -40/16 C
+    (row,) = readings(conn)
+    assert row["temp_c"] == pytest.approx(-2.5)

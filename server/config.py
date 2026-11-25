@@ -63,6 +63,7 @@ class TagConfig:
 class UnitsConfig:
     display_temperature: str = "C"
     temp_input_unit: str = "C"
+    temp_scale: float = 1.0
     humidity_scale: float = 1.0
     temp_offset_c: float = 0.0
     humidity_offset_pct: float = 0.0
@@ -292,6 +293,7 @@ def _check_ranges(c: Config, errors: list[str]) -> None:
     for label, value in (
         ("tag.expected_beacon_interval_s", c.tag.expected_beacon_interval_s),
         ("tag.offline_warning_s", c.tag.offline_warning_s),
+        ("units.temp_scale", c.units.temp_scale),
         ("units.humidity_scale", c.units.humidity_scale),
         ("validation.max_temp_step_c_per_s", c.validation.max_temp_step_c_per_s),
         ("validation.max_rh_step_per_s", c.validation.max_rh_step_per_s),

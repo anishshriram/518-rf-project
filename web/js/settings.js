@@ -25,6 +25,7 @@ const LABELS = {
   "tag.battery_installed": "Battery installed on",
   "units.display_temperature": "Default temperature unit",
   "units.temp_input_unit": "Unit the tag reports",
+  "units.temp_scale": "Temperature scale factor",
   "units.humidity_scale": "Humidity scale factor",
   "units.temp_offset_c": "Temperature offset (°C)",
   "units.humidity_offset_pct": "Humidity offset (points)",

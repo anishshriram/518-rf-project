@@ -264,3 +264,19 @@ def test_mixed_session():
     assert [p.tx_id for p in packets] == [13172869, 3378, 8912822]
     assert [p.crc_ok for p in packets] == [False, True, False]
     assert [s.packets for s in summaries] == [19, 1]
+
+
+# Real good packets from tag 3416
+
+
+def test_real_good_lines():
+    packets = [parse_line(line) for line in read_fixture("observed_good.txt")]
+    assert len(packets) == 4
+    for packet in packets:
+        assert (packet.crc_ok, packet.crc_text) == (True, "CRC")
+        assert (packet.rx_id, packet.tx_id) == (191, 3416)
+    # Once an hour the tag appends battery voltage and energy used.
+    assert [p.data_len for p in packets] == [6, 6, 6, 10]
+    battery = packets[-1]
+    assert (battery.light_raw, battery.temp_raw) == (202.0, 32.3)
+    assert battery.humidity_raw == 431.0

@@ -1,0 +1,4 @@
+TS:1795618676460	Drop:0	RX:191	TX:03416	RSSI:-36.50	    CRC	Data: 0c ca 01 44 01 b0  | light: 202 temp: 32.40 humidity: 432
+TS:1795618677453	Drop:0	RX:191	TX:03416	RSSI:-36.50	    CRC	Data: 0c ca 01 43 01 ae  | light: 202 temp: 32.30 humidity: 430
+TS:1795618678446	Drop:0	RX:191	TX:03416	RSSI:-36.00	    CRC	Data: 0c ca 01 44 01 ae  | light: 202 temp: 32.40 humidity: 430
+TS:1795618703280	Drop:0	RX:191	TX:03416	RSSI:-36.00	    CRC	Data: 4c ca 01 43 01 af 0b 6b 00 15  | light: 202 temp: 32.30 humidity: 431

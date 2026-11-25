@@ -224,3 +224,19 @@ Choices made where the spec was ambiguous or the environment differed from it.
 - **The test alert** button is only on the settings page now.
 - **Icons** are a small inline set; emoji are gone. Event times show in text, so
   nothing depends on hovering.
+
+## M7: hardware
+
+- **Real tag:** TX 3416, RX 191 (MAC 00-00-BF), one packet per second, status text
+  `CRC`. Real lines are in `tests/fixtures/observed_good.txt`.
+- **Units:** the tag firmware sends temperature and humidity times 16. `pip_sense`
+  prints temperature divided by 10 and humidity undivided, so `temp_scale = 0.625`
+  (new key) and `humidity_scale = 0.0625`. Defaults stay 1.0. The scales are not
+  applied to the simulator, which already prints degrees and percent.
+- **Below 0 °C** the receiver prints an unsigned number; it is turned back into a
+  negative one. Not yet seen on the real tag: a firmware comment says the lowest
+  reported value is 0 °C.
+- **Light** is 0 to 255, higher is brighter, and saturates at 255.
+- **Hourly battery packet** (header 0x4c) adds millivolts; not used yet beyond
+  `scripts/probe_tag.py`.
+- **macOS scripts** no longer use `sudo`: the receiver opens without it (tested).

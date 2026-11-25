@@ -12,6 +12,7 @@ from server.config import Config, ValidationConfig
 CLOCK_SKEW_MS = 10 * 60 * 1000
 STEP_WINDOW_MS = 10 * 60 * 1000
 RH_CLIP_MARGIN = 3.0
+SIGN_BIT = 32768
 
 Int64 = Annotated[int, Field(ge=-(2**63), lt=2**63)]
 Number = Annotated[float, Field(allow_inf_nan=False)]
@@ -127,7 +128,9 @@ def store_reading(
     if allowed and packet.tx_id not in allowed:
         return "foreign", None
 
-    temp_c, rh_pct = convert(config, packet.temp_raw, packet.humidity_raw)
+    temp_c, rh_pct = convert(
+        config, packet.temp_raw, packet.humidity_raw, source
+    )
     quality, reason, rh_pct = _assess(
         conn, config, packet, source, temp_c, rh_pct, clock_skew
     )
@@ -166,16 +169,28 @@ def store_reading(
     return ("rejected" if quality == "rejected" else "accepted"), published
 
 
-def convert(config: Config, temp_raw: float | None, humidity_raw: float | None):
-    """Convert raw sensor values to (temp_c, rh_pct), applying offsets."""
+def convert(
+    config: Config, temp_raw: float | None, humidity_raw: float | None, source: str
+):
+    """Convert raw sensor values to (temp_c, rh_pct), applying scales and offsets.
+
+    The simulator already prints degrees and percent, so it is not scaled.
+    """
     units = config.units
+    scaled = source != "simulator"
     temp_c = rh_pct = None
     if temp_raw is not None:
+        # pip_sense prints the tag's signed 16-bit number as unsigned, over 10.
+        if temp_raw >= SIGN_BIT / 10:
+            temp_raw -= 2 * SIGN_BIT / 10
+        if scaled:
+            temp_raw *= units.temp_scale
         if units.temp_input_unit == "F":
             temp_raw = derive.f_to_c(temp_raw)
         temp_c = temp_raw + units.temp_offset_c
     if humidity_raw is not None:
-        rh_pct = humidity_raw * units.humidity_scale + units.humidity_offset_pct
+        scale = units.humidity_scale if scaled else 1.0
+        rh_pct = humidity_raw * scale + units.humidity_offset_pct
     return temp_c, rh_pct
 
 

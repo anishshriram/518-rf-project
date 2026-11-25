@@ -46,6 +46,7 @@ function render() {
   const { current, days, totals } = state;
   setText($("station"), current.station.name);
   showSource(current.mode);
+  document.body.classList.toggle("view-only", !current.can_edit);
   for (const button of $("units").children) button.setAttribute("aria-pressed", String(button.textContent === tempUnit()));
   renderDays($("days"), days, current.station.timezone);
   renderGlossary($("glossary"));

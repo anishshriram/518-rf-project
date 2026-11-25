@@ -11,7 +11,7 @@ import time
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
+from tests.clients import local_client
 
 from server.app import create_app
 from server.config import Config
@@ -32,7 +32,7 @@ def packet(**changes):
 def client(tmp_path):
     config = Config()
     config.server.db_path = str(tmp_path / "api.db")
-    with TestClient(create_app(config)) as c:
+    with local_client(create_app(config)) as c:
         yield c
 
 

@@ -3,7 +3,7 @@
 import time
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.clients import local_client
 
 from server import history
 from server.app import create_app
@@ -22,7 +22,7 @@ def config(tmp_path):
 
 @pytest.fixture
 def client(config):
-    with TestClient(create_app(config)) as c:
+    with local_client(create_app(config)) as c:
         yield c
 
 

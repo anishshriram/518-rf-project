@@ -240,3 +240,14 @@ Choices made where the spec was ambiguous or the environment differed from it.
 - **Hourly battery packet** (header 0x4c) adds millivolts; not used yet beyond
   `scripts/probe_tag.py`.
 - **macOS scripts** no longer use `sudo`: the receiver opens without it (tested).
+
+## Sharing
+
+- **Viewers elsewhere are read-only.** Only a direct request from the station
+  computer may read or change settings, dismiss alerts or send a test. A tunnel also
+  connects from this computer, so forwarding headers or a foreign `Host` count as
+  elsewhere.
+- **Coordinates are hidden** from other viewers. Sun times still reveal roughly where
+  the station is.
+- **The default ingest token** only works on the station computer.
+- **At most 100 live viewers** at once.

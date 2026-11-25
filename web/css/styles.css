@@ -64,6 +64,7 @@
 /* Base */
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+.view-only .editing { display: none; }
 html { scroll-padding-top: 120px; }
 body { margin: 0; background: var(--page); color: var(--text); font: var(--body)/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
 h1, h2, h3, p, ul, ol, dl, dd, figure { margin: 0; padding: 0; }

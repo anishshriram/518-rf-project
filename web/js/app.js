@@ -69,7 +69,8 @@ function applyCurrent(data) {
   if (setDefaultUnit(data.display_temperature)) showUnit();
   setText($("station"), data.station.name);
   document.title = `${data.station.name} — PIP Weather`;
-  setText($("place"), formatPlace(data.station.latitude, data.station.longitude));
+  setText($("place"), data.station.latitude === null ? "" : formatPlace(data.station.latitude, data.station.longitude));
+  document.body.classList.toggle("view-only", !data.can_edit);
   $("enable-notifications").hidden = !data.browser_notifications
     || !("Notification" in window) || Notification.permission !== "default";
   showSource(data.mode);

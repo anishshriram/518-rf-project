@@ -33,6 +33,14 @@ in the database and override `config.toml`.
 After changing units, offsets or the tag list, recompute stored readings with
 `python -m server.rebuild`.
 
+## Sharing
+
+With `host = "0.0.0.0"` and your own `ingest_token` in `config.toml`, devices on
+the same Wi-Fi can open the dashboard. `scripts/share.sh` shows the link;
+`scripts/share.sh public` also opens a public one with Tailscale Funnel. Other
+people can only look: settings and alerts can be changed only on the station
+computer, and the coordinates are hidden from everyone else.
+
 ## Alert emails (optional)
 
 Set `alerts.email_enabled` and `alerts.email_to` in `config.toml`, and the

@@ -8,7 +8,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.clients import local_client
 
 from collector.parser import Packet, parse_line
 from collector.simulator import Simulator, parse_args
@@ -205,7 +205,7 @@ def test_health_in_tag_dies(config):
     fill(conn, config, items)
     bad = sum(not p["crc_ok"] for p in items)
     conn.close()
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         data = client.get("/api/health").json()
         current = client.get("/api/current").json()
     tag = data["tag"]
@@ -220,7 +220,7 @@ def test_health_in_tag_dies(config):
 
 
 def test_health_of_empty_database(config):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         data = client.get("/api/health").json()
     assert data["tag"]["status"] == "never_seen" and data["tag"]["tx_id"] == 3378
 
@@ -247,7 +247,7 @@ def test_daily_api(config):
     conn = db.connect(config.server.db_path)
     fill(conn, config, packets(START, 1440 * 2 + 600, light=sunny(config, START)))
     conn.close()
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         def ready():
             rows = client.get("/api/daily").json()
             return rows if len(rows) == 3 and rows[0]["bright_sun_hours"] else None
@@ -267,7 +267,7 @@ def test_late_data_updates_a_stored_day(config):
     conn = db.connect(config.server.db_path)
     fill(conn, config, packets(START, 600) + packets(START + DAY, 600))
     conn.close()
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         def first_max():
             rows = client.get("/api/daily?to=2026-11-20").json()
             return rows and rows[0]["temp_max_c"]
@@ -294,7 +294,7 @@ def test_csv(config):
     items = packets(START, 2500, step=1000, temp=lambda i: 99 if i == 5 else 10)
     fill(conn, config, items)
     conn.close()
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         raw = read_csv(client, resolution="raw")
         assert len(raw) == 2500
         assert raw[0]["time"] == "2026-11-20T00:00:00-05:00"
@@ -310,7 +310,7 @@ def test_csv(config):
 
 
 def test_csv_of_empty_database(config):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         text = client.get("/api/export.csv?resolution=1m").text
     assert text.startswith("time,ts_ms,source,n,") and text.count("\n") == 1
 

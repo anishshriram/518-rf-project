@@ -16,7 +16,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -33,6 +33,7 @@ from server import (
     settings,
     sun,
 )
+from server.access import is_local, local_only
 from server.alerts import AlertManager, channel_enabled, query_events
 from server.calibration import Calibrator
 from server.config import Config, ConfigError, load_config
@@ -42,6 +43,7 @@ from server.stream import Broadcaster
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 REPLAY_MAX = 2000
+STREAMS_MAX = 100
 logger = logging.getLogger("uvicorn.error")
 DEFAULT_SPAN_MS = 15 * history.MINUTE
 CURRENT_VALUES = (
@@ -251,9 +253,14 @@ def create_app(config: Config) -> FastAPI:
     @app.post("/api/ingest", summary="Receive packets from the collector")
     def post_ingest(
         request: IngestRequest,
+        http: Request,
         x_ingest_token: Annotated[str | None, Header()] = None,
     ) -> dict[str, int]:
         require_token(x_ingest_token)
+        if config.server.ingest_token == Config().server.ingest_token and (
+            not is_local(http)
+        ):
+            raise HTTPException(403, "set your own ingest_token first")
         with db_lock:
             counts, readings = ingest(app.state.db, config, request)
             forget_changed_days(readings)
@@ -264,9 +271,13 @@ def create_app(config: Config) -> FastAPI:
         return counts
 
     @app.get("/api/current", summary="Latest reading and tag status")
-    def get_current() -> dict:
+    def get_current(http: Request) -> dict:
         with reader() as conn:
-            return current(conn, config, calibrator, now_ms())
+            result = current(conn, config, calibrator, now_ms())
+        result["can_edit"] = is_local(http)
+        if not result["can_edit"]:
+            result["station"].update(latitude=None, longitude=None)
+        return result
 
     @app.get("/api/history", summary="Time series for the charts")
     def get_history(
@@ -384,14 +395,18 @@ def create_app(config: Config) -> FastAPI:
             headers={"Content-Disposition": f'attachment; filename="{name}"'},
         )
 
-    @app.get("/api/settings", summary="Editable settings, with defaults")
+    @app.get(
+        "/api/settings",
+        summary="Editable settings, with defaults",
+        dependencies=[Depends(local_only)],
+    )
     def get_settings() -> dict:
         return settings.describe(base_config, config)
 
     @app.put(
         "/api/settings",
         summary="Change some settings; null restores a default",
-        dependencies=[Depends(same_site)],
+        dependencies=[Depends(local_only), Depends(same_site)],
     )
     def put_settings(changes: dict[str, dict]) -> dict:
         with db_lock:
@@ -428,7 +443,7 @@ def create_app(config: Config) -> FastAPI:
     @app.post(
         "/api/events/{event_id}/ack",
         summary="Dismiss an alert",
-        dependencies=[Depends(same_site)],
+        dependencies=[Depends(local_only), Depends(same_site)],
     )
     def post_ack(event_id: int) -> dict[str, bool]:
         if not 0 <= event_id < 2**63 or not app.state.alerts.acknowledge(event_id):
@@ -438,7 +453,7 @@ def create_app(config: Config) -> FastAPI:
     @app.post(
         "/api/alerts/test",
         summary="Send a test alert through every enabled channel",
-        dependencies=[Depends(same_site)],
+        dependencies=[Depends(local_only), Depends(same_site)],
     )
     def post_test_alert() -> dict[str, str]:
         event = {
@@ -481,6 +496,8 @@ def create_app(config: Config) -> FastAPI:
     async def get_stream(
         last_event_id: Annotated[str | None, Header()] = None,
     ) -> StreamingResponse:
+        if broadcaster.client_count >= STREAMS_MAX:
+            raise HTTPException(503, "too many viewers")
         valid = last_event_id and last_event_id.isascii() and last_event_id.isdigit()
         last_id = int(last_event_id[:18]) if valid else None
 

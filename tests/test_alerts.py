@@ -6,7 +6,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.clients import local_client
 
 from server import db, notify_email
 from server.alerts import AlertManager, query_events
@@ -232,7 +232,7 @@ def wait_for(get, timeout=10):
 
 
 def test_events_end_to_end(config, smtp):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         assert client.get("/api/events").json() == []
         send(client, 20, -5)
         (event,) = wait_for(lambda: client.get("/api/events?type=freeze").json())
@@ -248,19 +248,19 @@ def test_events_end_to_end(config, smtp):
 
 @pytest.mark.parametrize("event_id", ["999", "-1", str(2**70)])
 def test_ack_unknown_event(config, event_id):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         assert client.post(f"/api/events/{event_id}/ack").status_code == 404
 
 
 def test_cross_site_requests_are_refused(config):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         headers = {"Sec-Fetch-Site": "cross-site"}
         assert client.post("/api/alerts/test", headers=headers).status_code == 403
         assert client.post("/api/events/1/ack", headers=headers).status_code == 403
 
 
 def test_test_alert(config, smtp):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         assert client.post("/api/alerts/test").json() == {
             "dashboard": "sent", "browser": "sent", "email": "sent",
         }
@@ -269,17 +269,17 @@ def test_test_alert(config, smtp):
 
 def test_test_alert_reports_problems(config, smtp, monkeypatch):
     monkeypatch.delenv("SMTP_HOST")
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         reply = client.post("/api/alerts/test").json()
         assert reply["email"] == "not configured: SMTP_HOST"
     config.alerts.email_enabled = False
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         assert client.post("/api/alerts/test").json()["email"] == "disabled"
 
 
 def test_password_does_not_leak(config, smtp, monkeypatch):
     monkeypatch.setenv("SMTP_PASS", "sekrit")
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         texts = [client.get("/api/current").text, client.post("/api/alerts/test").text]
     assert "sekrit" not in json.dumps(texts)
 
@@ -294,7 +294,7 @@ def test_channels_per_type(made, config):
 
 def test_banner_switch(config, smtp):
     config.alerts.types = {"freeze": {"dashboard": False}}
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         send(client, 20, -5)
         (event,) = wait_for(lambda: client.get("/api/events?type=freeze").json())
         assert event["banner"] is False

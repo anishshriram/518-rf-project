@@ -20,6 +20,10 @@ class Broadcaster:
         self._clients: set[asyncio.Queue] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
+    @property
+    def client_count(self) -> int:
+        return len(self._clients)
+
     def start(self) -> None:
         """Remember the running event loop; call from inside it."""
         self._loop = asyncio.get_running_loop()

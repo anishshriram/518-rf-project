@@ -4,7 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.clients import local_client
 
 from server import aggregates, db, rebuild
 from server.app import create_app
@@ -31,7 +31,7 @@ def config(tmp_path):
 
 @pytest.fixture
 def client(config):
-    with TestClient(create_app(config)) as c:
+    with local_client(create_app(config)) as c:
         yield c
 
 

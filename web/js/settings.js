@@ -289,6 +289,7 @@ try {
   const [settings, current] = await Promise.all(
     ["api/settings", "api/current"].map(async (url) => {
       const response = await fetch(url, { cache: "no-store" });
+      if (response.status === 403) throw new Error("they can only be opened on the station computer, at http://127.0.0.1");
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return response.json();
     }),
@@ -299,5 +300,6 @@ try {
   $("simulated").hidden = current.mode !== "simulator";
   build();
 } catch (error) {
+  document.querySelector(".save-bar").hidden = true;
   show(`Could not load the settings: ${error.message}`, "critical");
 }

@@ -1,7 +1,7 @@
 """Tests for server.settings and the settings API."""
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.clients import local_client
 
 from server import db, settings
 from server.alerts import ALERT_FROM, channel_enabled
@@ -20,7 +20,7 @@ def config(tmp_path):
 
 @pytest.fixture
 def client(config):
-    with TestClient(create_app(config)) as c:
+    with local_client(create_app(config)) as c:
         yield c
 
 
@@ -46,11 +46,11 @@ def test_change_applies_at_once(client, config):
 
 
 def test_change_survives_a_restart(config, tmp_path):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         put(client, {"home": {"indoor_setpoint_c": 19}})
     fresh = Config()
     fresh.server.db_path = config.server.db_path
-    with TestClient(create_app(fresh)) as client:
+    with local_client(create_app(fresh)) as client:
         values = client.get("/api/settings").json()
     assert values["values"]["home"]["indoor_setpoint_c"] == 19
     assert values["defaults"]["home"]["indoor_setpoint_c"] == 21

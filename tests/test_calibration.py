@@ -5,7 +5,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
-from fastapi.testclient import TestClient
+from tests.clients import local_client
 
 from collector.parser import Packet, parse_line
 from collector.simulator import Simulator, parse_args
@@ -201,7 +201,7 @@ def test_api_before_and_after_calibration(config, monkeypatch):
         "from": end - 3_600_000, "to": end,
         "metrics": "light_norm,clear_sky_norm,clearness",
     }
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         for _ in range(100):
             data = client.get("/api/current").json()
             if not data["flags"]["calibrating_light"]:
@@ -231,7 +231,7 @@ def test_api_without_calibration(config):
     conn = db.connect(config.server.db_path)
     end = fill(conn, config, 0.5, clear())
     conn.close()
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         data = client.get("/api/current").json()
         assert data["flags"]["calibrating_light"] is True
         assert data["sky"] is None and 0 <= data["light_norm"] <= 1
@@ -244,7 +244,7 @@ def test_api_without_calibration(config):
 
 
 def test_empty_database(config):
-    with TestClient(create_app(config)) as client:
+    with local_client(create_app(config)) as client:
         data = client.get("/api/current").json()
         assert data["flags"]["calibrating_light"] is True
         assert data["sun"]["sunrise_ms"] is not None

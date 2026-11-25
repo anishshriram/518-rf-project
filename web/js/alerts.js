@@ -111,7 +111,7 @@ export class Alerts {
   }
 
   #ackButton(event) {
-    const button = element("button", "quiet", event.type === "test" ? "Close" : "Acknowledge");
+    const button = element("button", event.type === "test" ? "quiet" : "quiet editing", event.type === "test" ? "Close" : "Acknowledge");
     button.type = "button";
     button.setAttribute("aria-label", `${button.textContent}: ${event.title}`);
     button.addEventListener("click", () => this.#acknowledge(event, button));

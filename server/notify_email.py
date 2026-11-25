@@ -41,7 +41,9 @@ def build_message(config: Config, event: dict, reading: dict | None) -> EmailMes
             f"Latest reading: {reading['temp_c']:.1f} °C, {reading['rh_pct']:.0f}% "
             f"humidity, light {reading['light_raw']:.0f}"
         )
-    lines += ["", f"Dashboard: http://{config.server.host}:{config.server.port}/"]
+    # 0.0.0.0 means "every network", which is not an address to open.
+    host = "127.0.0.1" if config.server.host == "0.0.0.0" else config.server.host
+    lines += ["", f"Dashboard: http://{host}:{config.server.port}/"]
     message = EmailMessage()
     message["Subject"] = f"[PIP Weather] {label}{event['title']} — {local:%Y-%m-%d %H:%M}"
     message["From"] = os.environ.get("SMTP_FROM", "")
